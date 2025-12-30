@@ -23,7 +23,14 @@ def validate_registration_data(serializer):
 
 
 def create_medecin(serializer):
-    return serializer.save(is_active=False)
+    user = serializer.save(is_active=False,role='MEDECIN')
+    
+    user.role = 'MEDECIN'
+    user.save()
+    
+    return user
+    
+
 
 
 def create_profile(user, data):
@@ -63,7 +70,7 @@ def send_activation_email(user, activation_link):
             "platform_name": "DOSSAHA",
             "user_name": f"{user.first_name} {user.last_name}",
             # 'user_role': user.role  # 'medecin' ou 'patient'
-            "user_role": "medecin",  #
+            "user_role": user.role ,  #
         },
     )
 

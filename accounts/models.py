@@ -40,13 +40,13 @@ class MedecinProfile(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='profile'
+        related_name="profile",
         # limit_choices_to={"role": "MEDECIN"},
     )
-    
+
     activation_token = models.CharField(max_length=50, blank=True, null=True)
     activation_token_expire = models.DateTimeField(null=True, blank=True)
-    
+
     is_verified = models.BooleanField(default=False)
     specialite = models.CharField(max_length=100, blank=True, null=True)
 
@@ -62,9 +62,10 @@ class MedecinProfile(models.Model):
         return f"Dr {self.user.first_name}  {self.user.last_name}"
 
 
-# if created and instance.role == Role.MEDECIN:
-    
+
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
-def create_profile(sender, instance, created, **kwargs):
-    if created:
-        MedecinProfile.objects.create(user=instance)
+def create_profile(sender, instance, **kwargs):
+
+    if instance.role == "MEDECIN":
+        if not hasattr(instance, "profile"):
+            MedecinProfile.objects.create(user=instance)

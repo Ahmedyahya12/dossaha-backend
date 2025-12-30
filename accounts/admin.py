@@ -11,6 +11,8 @@ class CustomUserAdmin(UserAdmin):
         "email",
         "is_staff",
         "is_active",
+        'role',
+        'status'
     )
     list_filter = (
         "email",
@@ -35,6 +37,7 @@ class CustomUserAdmin(UserAdmin):
                     "password2",
                     "is_staff",
                     "is_active",
+                    'role',
                     "groups",
                     "user_permissions",
                 ),

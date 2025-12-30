@@ -1,36 +1,19 @@
-User
-----
-id
-email
-password
-role (ADMIN | MEDECIN | PATIENT)
-status (PENDING | ACTIVE | REJECTED)
-is_active
-created_at
+        ┌──────────────┐
+        │     User     │
+        │──────────────│
+        │ id           │
+        │ email        │
+        │ role         │
+        │ status       │
+        └─────┬────────┘
+              │ 1
+              │
+       ┌──────▼──────────┐
+       │ MedecinProfile  │
+       └─────────────────┘
 
 
-PatientProfile
-----
-id
-user (FK)
-date_naissance
-numero_dossier
-
-
-MedicalRecord
-----
-id
-patient (FK)
-medecin (FK)
-encrypted_file
-created_at
-updated_at
-
-
-AuditLog
-----
-id
-user (FK)
-action
-target
-timestamp
+User (Patient) ── 1 ── N ── DossierMedical ── 1 ── N ── DossierDocument
+                       ▲
+                       │
+               User (Medecin)
