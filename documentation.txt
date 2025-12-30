@@ -1,0 +1,19 @@
+
+App accounts 
+
+/api/accounts/
+│
+├──
+│   ├── register/
+├──      medecin/
+└──      patient/
+
+│   ├── activate/
+│   └── login/
+│
+├── password/
+│   ├── reset/
+│   └── reset/confirm/
+│
+└── me/
+
