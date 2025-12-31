@@ -3,7 +3,6 @@ App accounts
 
 /api/accounts/
 │
-├──
 │   ├── register/
 ├──      medecin/
 └──      patient/
@@ -16,4 +15,22 @@ App accounts
 │   └── reset/confirm/
 │
 └── me/
+
+
+app medical_records
+
+/api/medicalrecord
+
+│
+│   ├── /  Get
+├── 
+
+│   ├── /add/ POST
+│   └── /<pk:str>/change/ PUT,patch
+  
+│
+├── /<pk:str>/archive/ PUT,patch/
+│  
+│
+└── 
 

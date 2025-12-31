@@ -1,5 +1,4 @@
 from rest_framework import serializers
-
 from accounts.models import CustomUser
 
 
@@ -31,3 +30,8 @@ class SignUpSerializer(serializers.ModelSerializer):
         user.save()
 
         return user
+
+class UserInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ('id', 'email', 'first_name', 'last_name')

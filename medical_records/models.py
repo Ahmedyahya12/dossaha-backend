@@ -26,6 +26,7 @@ class MedicalRecord(models.Model):
         related_name="created_medical_records",
         limit_choices_to={"role": "MEDECIN"},
     )
+    
 
     status = models.CharField(
         max_length=10,
@@ -34,6 +35,8 @@ class MedicalRecord(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+    
 
     def __str__(self):
         return f"MedicalRecord #{self.id}"
@@ -70,6 +73,7 @@ class MedicalDocument(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
     def __str__(self):
         return f"{self.file_type} - Record #{self.medical_record.id}"
