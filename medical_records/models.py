@@ -33,7 +33,7 @@ class MedicalRecord(models.Model):
         choices=Status.choices,
         default=Status.OPEN,
     )
-
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
     
@@ -57,11 +57,12 @@ class MedicalDocument(models.Model):
         related_name="documents",
     )
 
-    file = models.FileField(upload_to="medical_documents/")
+    file = models.FileField(upload_to="medical_documents/",null=True,blank=True)
 
     file_type = models.CharField(
         max_length=20,
         choices=DocumentType.choices,
+        default=DocumentType.OTHER
     )
 
     uploaded_by = models.ForeignKey(

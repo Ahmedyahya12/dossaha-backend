@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from accounts.serializers import UserInfoSerializer
-from medical_records.models import MedicalRecord
+from medical_records.models import MedicalDocument, MedicalRecord
 
 
 class MedicalRecordSerializer(serializers.ModelSerializer):
@@ -10,4 +10,11 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalRecord
         fields = "__all__"
-     
+
+
+class MedicalDocumentSerializer(serializers.ModelSerializer):
+    # medical_record=serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MedicalDocument
+        fields = "__all__"

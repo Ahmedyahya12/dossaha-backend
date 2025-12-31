@@ -1,0 +1,12 @@
+
+medecaldocument
+
+
+List_documents_medical
+Get_document_medical
+create_document_medical
+
+
+Archived
+
+updated 
