@@ -1,12 +1,43 @@
 from rest_framework import serializers
-from accounts.models import CustomUser
+from accounts.models import CustomUser, MedecinProfile
 
 
+class MedecinProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedecinProfile
+        fields = [
+            "specialite",
+            "licence_number",
+            "organisation",
+            "telephone",
+            "photo",
+            "bio",
+            "is_verified",
+            "verified_at",
+        ]
+
+
+class CurrentUserSerializer(serializers.ModelSerializer):
+    profile = MedecinProfileSerializer(read_only=True)
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+            "status",
+            "is_email_verified",
+            "created_at",
+            "profile",
+        ]
 class SignUpSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ["first_name", "last_name", "email", "password",'role']
+        fields = ["first_name", "last_name", "email", "password"]
         extra_kwargs = {
             "first_name": {"required": True, "allow_blank": False},
             "last_name": {"required": True, "allow_blank": False},
@@ -35,3 +66,5 @@ class UserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ('id', 'email', 'first_name', 'last_name')
+
+

@@ -1,7 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework import serializers
-from accounts.models import MedecinProfile
-from accounts.serializers import SignUpSerializer
+from accounts.serializers import CurrentUserSerializer, SignUpSerializer
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.serializers import ValidationError
@@ -9,6 +8,7 @@ from accounts.services.activation_serice import (
     activate_user_and_profile,
     validate_activation_token,
 )
+from rest_framework.permissions import IsAuthenticated
 from accounts.services.registration_service import (
     build_activation_link,
     create_profile,
@@ -72,3 +72,10 @@ def activate_account(request, token):
         return Response(
             {"error": "Jeton d’activation invalide."}, status=status.HTTP_404_NOT_FOUND
         )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_current_user(request):
+    serializer = CurrentUserSerializer(request.user)
+    return Response(serializer.data)

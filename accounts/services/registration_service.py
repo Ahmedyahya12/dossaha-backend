@@ -1,5 +1,6 @@
 from datetime import timedelta
 from rest_framework import serializers
+from accounts.models import MedecinProfile
 from common.user_account import User
 from django.utils.crypto import get_random_string
 from django.conf import settings
@@ -23,22 +24,20 @@ def validate_registration_data(serializer):
 
 
 def create_medecin(serializer):
-    user = serializer.save(is_active=False,role='MEDECIN')
-    
-    user.role = 'MEDECIN'
-    user.save()
-    
-    return user
-    
 
+    user = serializer.save(is_active=True, role="MEDECIN")
+    user.role = "MEDECIN"
+    user.save()
+    return user
 
 
 def create_profile(user, data):
-    profile = user.profile
+    profile, _ = MedecinProfile.objects.get_or_create(user=user)
     profile.specialite = data.get("specialite")
     profile.licence_number = data.get("licence_number")
     profile.telephone = data.get("telephone")
     profile.bio = data.get("bio")
+    profile.organisation = data.get("organisation")
     profile.save()
 
 
@@ -48,6 +47,7 @@ def generate_and_save_activation_token(user):
 
     user.profile.activation_token = token
     user.profile.activation_token_expire = expire_date
+    # user.profile.is_activated=True
     user.profile.save()
 
     return token
@@ -55,6 +55,7 @@ def generate_and_save_activation_token(user):
 
 def build_activation_link(token):
 
+    # return f"{settings.FRONTEND_ACTIVATE_URL}/{token}/"
     return f"{settings.BASE_URL}/api/accounts/activate/{token}/"
 
 
@@ -70,7 +71,7 @@ def send_activation_email(user, activation_link):
             "platform_name": "DOSSAHA",
             "user_name": f"{user.first_name} {user.last_name}",
             # 'user_role': user.role  # 'medecin' ou 'patient'
-            "user_role": user.role ,  #
+            "user_role": user.role,  #
         },
     )
 
