@@ -1,14 +1,26 @@
-from django.db import models
 from django.conf import settings
-from .encryption import EncryptionService
+from django.db import models
+from django.utils import timezone
+
+
+class RecordStatus(models.TextChoices):
+    OPEN = "OPEN", "Open"
+    CLOSED = "CLOSED", "Closed"
+    ARCHIVED = "ARCHIVED", "Archived"
+
+
+class DocumentType(models.TextChoices):
+    CONSULT_NOTE = "CONSULT_NOTE", "Consultation"
+    PRESCRIPTION = "PRESCRIPTION", "Prescription"
+    LAB_RESULT = "LAB_RESULT", "Lab Result"
+    IMAGING_REPORT = "IMAGING_REPORT", "Imaging Report"
+    DISCHARGE_SUMMARY = "DISCHARGE_SUMMARY", "Discharge Summary"
 
 
 class MedicalRecord(models.Model):
-
-    class Status(models.TextChoices):
-        OPEN = "OPEN", "Open"
-        CLOSED = "CLOSED", "Closed"
-        ARCHIVED = "ARCHIVED", "Archived"
+    """
+    dossier = metadata
+    """
 
     patient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -21,146 +33,101 @@ class MedicalRecord(models.Model):
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="created_medical_records",
+        on_delete=models.PROTECT,
+        related_name="created_records",
         limit_choices_to={"role": "MEDECIN"},
-    )
-    encrypted_record_key = models.BinaryField(
-        null=True, blank=True, help_text="Clé du record chiffrée avec la Master Key"
     )
 
     status = models.CharField(
         max_length=10,
-        choices=Status.choices,
-        default=Status.OPEN,
+        choices=RecordStatus.choices,
+        default=RecordStatus.OPEN,
+    )
+
+    version = models.PositiveIntegerField(default=1)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+
+    # Permissions
+    allowed_doctors = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="shared_records",
+        limit_choices_to={"role": "MEDECIN"},
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-    def save(self, *args, **kwargs):
-        """
-        Override save pour générer et chiffrer la clé du record
-        """
-        # CORRECTION: Vérifier explicitement si None ou vide
-        if self.encrypted_record_key is None or len(self.encrypted_record_key or b'') == 0:
-            print(" Génération de la clé du record...")  # Debug
-            
-            # 1. Génère une nouvelle clé pour ce record
-            record_key = EncryptionService.generate_record_key()
-            # print(f"    Clé générée: {len(record_key)} bytes")
-            
-            # 2. Chiffre cette clé avec la Master Key
-            self.encrypted_record_key = EncryptionService.encrypt_record_key(record_key)
-            # print(f"   Clé chiffrée: {len(self.encrypted_record_key)} bytes")
-        else:
-            print(" Clé existante trouvée")
-        
-        super().save(*args, **kwargs)
-    
-    def get_decrypted_record_key(self):
-        """
-        Déchiffre et retourne la clé du record
-        À utiliser uniquement côté serveur
-        """
-        #  Vérification explicite
-        if self.encrypted_record_key is None:
-            raise ValueError(
-                f" MedicalRecord #{self.id} n'a pas de clé chiffrée!\n"
-                f"   Le record a été créé sans encryption.\n"
-                f"   Solution: Supprime ce record et recrée-le."
-            )
-        
-        # S'assurer que c'est en bytes avant de décrypter
-        encrypted_key = self.encrypted_record_key
-        if isinstance(encrypted_key, memoryview):
-            encrypted_key = bytes(encrypted_key)
-        
-        return EncryptionService.decrypt_record_key(encrypted_key)
+    def touch_access(self):
+        self.last_accessed_at = timezone.now()
+        self.save(update_fields=["last_accessed_at"])
 
     def __str__(self):
-        return f"MedicalRecord #{self.id}"
+        return f"Record#{self.id} patient={self.patient}"
+
+
+class RecordKeyEnvelope(models.Model):
+
+    record = models.ForeignKey(
+        MedicalRecord, on_delete=models.CASCADE, related_name="key_envelopes"
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="record_key_envelopes",
+        limit_choices_to={"role": "MEDECIN"},
+    )
+
+    encrypted_dek = models.TextField()  # Base64 RSA-encrypted DEK
+    key_fingerprint = models.CharField(
+        max_length=80, null=True, blank=True
+    )  # e.g. sha256:...
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    is_active = models.BooleanField(default=True)  # revocation
+
+    class Meta:
+        unique_together = ("record", "doctor")
+
+    def __str__(self):
+        return f"Envelope record={self.record_id} doctor={self.doctor_id}"
 
 
 class MedicalDocument(models.Model):
-
-    class DocumentType(models.TextChoices):
-        LAB = "LAB", "Lab Result"
-        XRAY = "XRAY", "X-Ray"
-        PRESCRIPTION = "PRESCRIPTION", "Prescription"
-        REPORT = "REPORT", "Medical Report"
-        OTHER = "OTHER", "Other"
-
-    medical_record = models.ForeignKey(
-        MedicalRecord,
-        on_delete=models.CASCADE,
-        related_name="documents",
+    record = models.ForeignKey(
+        MedicalRecord, on_delete=models.CASCADE, related_name="documents"
     )
 
-    file = models.FileField(upload_to="medical_documents/", null=True, blank=True)
-    encrypted_file = models.BinaryField(
-        help_text="Fichier chiffré avec la clé du record",
-        null=True,blank=True
-    )
+    document_type = models.CharField(max_length=30, choices=DocumentType.choices)
+    title = models.CharField(max_length=200)
 
-    file_name = models.CharField(max_length=255,null=True,blank=True)
-    file_type = models.CharField(max_length=50,null=True,blank=True)  # ex: "application/pdf"
-    file_size = models.IntegerField(null=True,blank=True)  # taille en bytes
-
-    file_type = models.CharField(
-        max_length=20, choices=DocumentType.choices, default=DocumentType.OTHER
-    )
-
-    uploaded_by = models.ForeignKey(
+    created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="uploaded_documents",
+        on_delete=models.PROTECT,
+        related_name="created_documents",
+        limit_choices_to={"role": "MEDECIN"},
     )
-
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
-     
-    def save_encrypted_file(self, file_content):
-        """
-        Chiffre et sauvegarde un fichier
-        
-        Args:
-            file_content (bytes): Contenu du fichier en clair
-        """
-        print(f" Chiffrement du fichier {self.file_name}...")
-        
-        # 1. Récupère la clé du record (déchiffrée)
-        record_key = self.medical_record.get_decrypted_record_key()
-        print(f"   Clé du record récupérée")
-        
-        # 2. Chiffre le fichier avec cette clé
-        self.encrypted_file = EncryptionService.encrypt_file(file_content, record_key)
-        print(f"   Fichier chiffré: {len(self.encrypted_file)} bytes")
-        
-        self.save()
-        print(f"   Document sauvegardé en DB")
-    
-    def get_decrypted_file(self):
-        """
-        Déchiffre et retourne le fichier
-        
-        Returns:
-            bytes: Contenu du fichier en clair
-        """
-        # 1. Récupère la clé du record (déchiffrée)
-        record_key = self.medical_record.get_decrypted_record_key()
-        
-        # 2. Convertir memoryview si nécessaire
-        encrypted_file = self.encrypted_file
-        if isinstance(encrypted_file, memoryview):
-            encrypted_file = bytes(encrypted_file)
-        
-        # 3. Déchiffre le fichier
-        return EncryptionService.decrypt_file(encrypted_file, record_key)
-    
+
+    # E2EE: encrypted payload (AES-GCM)
+    encrypted_payload = models.TextField()  # Base64 ciphertext
+    payload_iv = models.CharField(max_length=64)  # Base64 nonce/iv
+    payload_tag = models.CharField(max_length=64)  # Base64 gcm tag
+
+    # Integrity & signature
+    payload_hash = models.CharField(max_length=128)  # sha256 hex or base64
+    signature = models.TextField()  # Base64 signature
+    signed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="signed_documents",
+        limit_choices_to={"role": "MEDECIN"},
+    )
+    signed_at = models.DateTimeField()
+
+    signing_key_fingerprint = models.CharField(max_length=80, null=True, blank=True)
+
+    is_revoked = models.BooleanField(default=False)
+
     def __str__(self):
-        return f"{self.file_name} #{self.id} - Record #{self.medical_record.id}"
+        return f"Doc#{self.id} record={self.record_id}"

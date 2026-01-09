@@ -13,6 +13,7 @@ class MedicalRecordCreateSerializer(serializers.Serializer):
     dek_envelope = RecordKeyEnvelopeSerializer()
 
     def validate(self, attrs):
+        # يمكنك إضافة تحقق: encrypted_dek موجود وlooks like base64
         return attrs
 
 
@@ -49,6 +50,7 @@ class MedicalDocumentCreateSerializer(serializers.Serializer):
     signing_key_fingerprint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
     def validate(self, attrs):
+        # تحقق document_type ضمن enum لو تحب:
         return attrs
 
 
