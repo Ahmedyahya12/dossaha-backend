@@ -55,8 +55,8 @@ def generate_and_save_activation_token(user):
 
 def build_activation_link(token):
 
-    # return f"{settings.FRONTEND_ACTIVATE_URL}/{token}/"
-    return f"{settings.BASE_URL}/api/accounts/activate/{token}/"
+    return f"{settings.FRONTEND_ACTIVATE_URL}/{token}/"
+    # return f"{settings.BASE_URL}/api/accounts/activate/{token}/"
 
 
 def send_activation_email(user, activation_link):

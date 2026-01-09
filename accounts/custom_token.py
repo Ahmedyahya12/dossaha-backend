@@ -1,36 +1,49 @@
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from rest_framework.exceptions import AuthenticationFailed
+
 from accounts.models import Role
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+
+    @staticmethod
+    def auth_fail(code: str, message: str):
+        raise AuthenticationFailed({"code": code, "detail": message})
+
     def validate(self, attrs):
         data = super().validate(attrs)
         user = self.user
 
-        # 0) 
         if user.role != Role.MEDECIN:
-            raise AuthenticationFailed("Ce endpoint est réservé aux médecins.")
+            self.auth_fail("NOT_MEDECIN", "Ce endpoint est réservé aux médecins.")
 
-        # 1) 
         if not getattr(user, "is_email_verified", False):
-            raise AuthenticationFailed("Veuillez activer votre email d'abord.")
+            self.auth_fail(
+                "EMAIL_NOT_VERIFIED", "Veuillez activer votre email d'abord."
+            )
 
         if user.status == "PENDING":
-            raise AuthenticationFailed("Compte en attente d'approbation admin.")
+            self.auth_fail(
+                "PENDING_ADMIN_APPROVAL", "Compte en attente d'approbation admin."
+            )
         if user.status == "REJECTED":
-            raise AuthenticationFailed("Compte rejeté par l'administration.")
+            self.auth_fail("REJECTED", "Compte rejeté par l'administration.")
         if user.status != "ACTIVE":
-            raise AuthenticationFailed("Compte inactif.")
+            self.auth_fail("INACTIVE", "Compte inactif.")
 
-       
         if not hasattr(user, "profile"):
-            raise AuthenticationFailed("Profil médecin introuvable. Contactez l'administration.")
-        if not user.profile.is_verified:
-            raise AuthenticationFailed("Compte médecin non vérifié par l'administration.")
+            self.auth_fail(
+                "PROFILE_MISSING",
+                "Profil médecin introuvable. Contactez l'administration.",
+            )
 
-        
+        if not user.profile.is_verified:
+            self.auth_fail(
+                "MEDECIN_NOT_VERIFIED",
+                "Compte médecin non vérifié par l'administration.",
+            )
+
         data["user"] = {
             "id": user.id,
             "email": user.email,
@@ -40,7 +53,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "status": user.status,
             "is_email_verified": getattr(user, "is_email_verified", False),
             "is_verified": user.profile.is_verified,
-            "specialite": user.profile.specialite,
+            "specialite": getattr(user.profile, "specialite", None),
         }
 
         return data

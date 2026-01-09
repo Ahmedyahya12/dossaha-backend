@@ -1,3 +1,6 @@
+
+import base64
+import hashlib
 from rest_framework.decorators import api_view
 from rest_framework import serializers
 from accounts.serializers import CurrentUserSerializer, SignUpSerializer
@@ -22,6 +25,111 @@ from rest_framework import status
 from rest_framework.decorators import permission_classes
 from rest_framework.permissions import AllowAny
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+
+from accounts.models import Role
+
+
+def _fingerprint_from_public_pem(public_pem: str) -> str:
+    """
+    Fingerprint stable: SHA-256 du contenu DER/bytes du PEM (ici on prend le base64 PEM).
+    """
+    # Nettoyer PEM -> garder uniquement la partie base64
+    lines = [
+        l.strip() for l in public_pem.strip().splitlines() if l and "-----" not in l
+    ]
+    b64 = "".join(lines)
+
+    try:
+        key_bytes = base64.b64decode(b64)
+    except Exception:
+        # fallback: fingerprint sur le texte si le pem n'est pas bien formé
+        key_bytes = public_pem.encode("utf-8")
+
+    digest = hashlib.sha256(key_bytes).hexdigest()
+    return f"sha256:{digest}"
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def upload_public_key(request):
+    """
+    POST /accounts/keys/public/
+    Body: { "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
+
+    - réservé aux médecins
+    - exige status ACTIVE + email verified + profile is_verified
+    - stocke public_key_pem + fingerprint + key_uploaded_at
+    """
+    user = request.user
+
+    # 1) Check role
+    if getattr(user, "role", None) != Role.MEDECIN:
+        return Response(
+            {"detail": "Endpoint réservé aux médecins."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # 2) Check account state
+    if getattr(user, "status", None) != "ACTIVE":
+        return Response(
+            {"detail": "Compte non ACTIVE (PENDING/REJECTED)."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if not getattr(user, "is_email_verified", False):
+        return Response(
+            {"detail": "Email non vérifié."}, status=status.HTTP_403_FORBIDDEN
+        )
+
+    if not hasattr(user, "profile") or not user.profile.is_verified:
+        return Response(
+            {"detail": "Profil non vérifié par admin."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # 3) Validate input
+    public_pem = request.data.get("public_key_pem")
+    if not public_pem or not isinstance(public_pem, str):
+        return Response(
+            {"public_key_pem": "Ce champ est requis."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if "BEGIN PUBLIC KEY" not in public_pem or "END PUBLIC KEY" not in public_pem:
+        return Response(
+            {"public_key_pem": "Format PEM invalide (BEGIN/END PUBLIC KEY manquant)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # 4) Save
+    fp = _fingerprint_from_public_pem(public_pem)
+    profile = user.profile
+
+    # Option: empêcher l'écrasement si déjà présent (rotation plus tard)
+    if profile.public_key_pem:
+        return Response(
+            {
+                "detail": "Une clé publique existe déjà. Rotation à implémenter plus tard.",
+                "fingerprint": profile.key_fingerprint,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    profile.public_key_pem = public_pem
+    profile.key_fingerprint = fp.replace("sha256:", "")[:64]  # ton champ max_length=64
+    profile.key_uploaded_at = timezone.now()
+    profile.save(update_fields=["public_key_pem", "key_fingerprint", "key_uploaded_at"])
+
+    return Response(
+        {
+            "detail": "Public key saved",
+            "fingerprint": fp,
+            "uploaded_at": profile.key_uploaded_at,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @csrf_exempt

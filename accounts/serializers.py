@@ -12,6 +12,9 @@ class MedecinProfileSerializer(serializers.ModelSerializer):
             "telephone",
             "photo",
             "bio",
+            "public_key_pem",
+            "key_fingerprint",
+            "key_uploaded_at",
             "is_verified",
             "verified_at",
         ]
@@ -33,6 +36,8 @@ class CurrentUserSerializer(serializers.ModelSerializer):
             "created_at",
             "profile",
         ]
+
+
 class SignUpSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -62,9 +67,8 @@ class SignUpSerializer(serializers.ModelSerializer):
 
         return user
 
+
 class UserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ('id', 'email', 'first_name', 'last_name')
-
-
+        fields = ("id", "email", "first_name", "last_name")
