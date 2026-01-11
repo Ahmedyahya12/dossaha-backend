@@ -15,4 +15,9 @@ urlpatterns = [
         views.get_document,
         name="get_document",
     ),
+    path(
+        "records/<int:record_id>/documents/<int:doc_id>/cipher/",
+        views.get_document_cipher,
+        name="document_cipher",
+    ),
 ]

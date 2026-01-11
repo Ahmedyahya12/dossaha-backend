@@ -34,6 +34,7 @@ class MedicalRecord(models.Model):
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
+        
         related_name="created_records",
         limit_choices_to={"role": "MEDECIN"},
     )
@@ -50,6 +51,7 @@ class MedicalRecord(models.Model):
     # Permissions
     allowed_doctors = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
+        null=True,
         blank=True,
         related_name="shared_records",
         limit_choices_to={"role": "MEDECIN"},
@@ -74,11 +76,12 @@ class RecordKeyEnvelope(models.Model):
     doctor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
+        null=True,
         related_name="record_key_envelopes",
         limit_choices_to={"role": "MEDECIN"},
     )
 
-    encrypted_dek = models.TextField()  # Base64 RSA-encrypted DEK
+    encrypted_dek = models.TextField(null=True)  # Base64 RSA-encrypted DEK
     key_fingerprint = models.CharField(
         max_length=80, null=True, blank=True
     )  # e.g. sha256:...
@@ -98,32 +101,35 @@ class MedicalDocument(models.Model):
         MedicalRecord, on_delete=models.CASCADE, related_name="documents"
     )
 
-    document_type = models.CharField(max_length=30, choices=DocumentType.choices)
-    title = models.CharField(max_length=200)
+    document_type = models.CharField(max_length=30, choices=DocumentType.choices, default=DocumentType.CONSULT_NOTE)
+    title = models.CharField(max_length=200,null=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="created_documents",
         limit_choices_to={"role": "MEDECIN"},
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     # E2EE: encrypted payload (AES-GCM)
-    encrypted_payload = models.TextField()  # Base64 ciphertext
-    payload_iv = models.CharField(max_length=64)  # Base64 nonce/iv
-    payload_tag = models.CharField(max_length=64)  # Base64 gcm tag
+    encrypted_payload = models.TextField(null=True)  # Base64 ciphertext
+    payload_iv = models.CharField(max_length=64, null=True)  # Base64 nonce/iv
+    payload_tag = models.CharField(max_length=64, null=True)  # Base64 gcm tag
 
     # Integrity & signature
-    payload_hash = models.CharField(max_length=128)  # sha256 hex or base64
-    signature = models.TextField()  # Base64 signature
+    payload_hash = models.CharField(max_length=128, null=True)  # sha256 hex or base64
+    signature = models.TextField(null=True)  # Base64 signature
     signed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
+        null=True,
         related_name="signed_documents",
         limit_choices_to={"role": "MEDECIN"},
     )
-    signed_at = models.DateTimeField()
+    signed_at = models.DateTimeField(null=True)
 
     signing_key_fingerprint = models.CharField(max_length=80, null=True, blank=True)
 

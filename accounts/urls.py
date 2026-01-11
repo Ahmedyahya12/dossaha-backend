@@ -10,6 +10,7 @@ urlpatterns = [
     path("activate/<str:token>/", views.activate_account, name="activate_account"),
     path("login", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("me/", views.get_current_user),
+     path("patients/", views.list_patients),
     # path("profile/", views.update_medecin_profile),
     # path("keys/public/", views.upload_public_key),
     # # admin

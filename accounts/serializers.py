@@ -1,6 +1,20 @@
 from rest_framework import serializers
 from accounts.models import CustomUser, MedecinProfile
 
+class PatientLiteSerializer(serializers.ModelSerializer):
+    code = serializers.SerializerMethodField()
+    label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = ["id", "code", "label"]
+
+    def get_code(self, obj):
+        return f"PT-{str(obj.id).zfill(4)}"
+
+    def get_label(self, obj):
+        return f"Patient #{str(obj.id).zfill(4)}"
+    
 
 class MedecinProfileSerializer(serializers.ModelSerializer):
     class Meta:

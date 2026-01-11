@@ -3,7 +3,7 @@ import base64
 import hashlib
 from rest_framework.decorators import api_view
 from rest_framework import serializers
-from accounts.serializers import CurrentUserSerializer, SignUpSerializer
+from accounts.serializers import CurrentUserSerializer, PatientLiteSerializer, SignUpSerializer
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.serializers import ValidationError
@@ -28,8 +28,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 
-from accounts.models import Role
-
+from accounts.models import CustomUser, Role
+from common.user_account import User
+from django.db.models import Q
 
 def _fingerprint_from_public_pem(public_pem: str) -> str:
     """
@@ -186,4 +187,22 @@ def activate_account(request, token):
 @permission_classes([IsAuthenticated])
 def get_current_user(request):
     serializer = CurrentUserSerializer(request.user)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_patients(request):
+    q = request.GET.get("q", "").strip()
+
+    qs = CustomUser.objects.filter(role=Role.PATIENT)
+
+    if q:
+        qs = qs.filter(
+            Q(id__icontains=q)
+        )
+
+    qs = qs.order_by("id")[:20]
+
+    serializer = PatientLiteSerializer(qs, many=True)
     return Response(serializer.data)
