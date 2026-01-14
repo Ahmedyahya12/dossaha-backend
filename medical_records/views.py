@@ -1,4 +1,5 @@
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -167,26 +168,47 @@ def get_document(request, record_id: int, doc_id: int):
 @api_view(["GET"])
 @permission_classes([IsActiveVerifiedMedecin])
 def get_document_cipher(request, record_id: int, doc_id: int):
-    record = MedicalRecord.objects.get(id=record_id)
+    record = get_object_or_404(MedicalRecord, id=record_id)
 
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-    has_env = record.key_envelopes.filter(doctor=request.user, is_active=True).exists()
+    has_env = record.key_envelopes.filter(
+        doctor=request.user, is_active=True
+    ).exists()
     if not has_env:
-        return Response({"detail": "No active DEK envelope"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "No active DEK envelope"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
-    doc = MedicalDocument.objects.get(id=doc_id, record=record)
+    doc = get_object_or_404(MedicalDocument, id=doc_id, record=record)
+
+    signed_by_data = None
+    if doc.signed_by:
+        signed_by_data = {
+            "id": doc.signed_by.id,
+            "name": doc.signed_by.get_full_name()
+                    or doc.signed_by.email
+        }
 
     return Response({
         "id": doc.id,
         "record_id": record.id,
+
+        # ➕ Metadata utiles pour l’UI
+        "title": doc.title,
+        "document_type": doc.document_type,
+
+        # 🔐 Crypto payload
         "encrypted_payload": doc.encrypted_payload,
         "payload_iv": doc.payload_iv,
         "payload_tag": doc.payload_tag,
         "payload_hash": doc.payload_hash,
+
+        # ✍️ Signature
         "signature": doc.signature,
-        "signed_by": doc.signed_by_id,
+        "signed_by": signed_by_data,
         "signed_at": doc.signed_at,
         "signing_key_fingerprint": doc.signing_key_fingerprint,
     })

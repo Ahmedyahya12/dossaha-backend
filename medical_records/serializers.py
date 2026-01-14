@@ -104,28 +104,58 @@ class MedicalDocumentDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "is_revoked",
         ]
+    def get_signed_by(self, obj):
+        if not obj.signed_by:
+            return None
+        return {
+            "id": obj.signed_by.id,
+            "name": obj.signed_by.get_full_name()
+                    or obj.signed_by.email
+        }
+
+    def get_created_by(self, obj):
+        if not obj.created_by:
+            return None
+        return {
+            "id": obj.created_by.id,
+            "name": obj.created_by.get_full_name()
+                    or obj.created_by.email
+        }
+
 
 class MedicalDocumentMetaSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+
     class Meta:
         model = MedicalDocument
         fields = [
             "id",
             "document_type",
             "title",
-            "created_by",
+            "created_by_name",   # 
             "created_at",
             "is_revoked",
         ]
 
+    def get_created_by_name(self, obj):
+        if not obj.created_by:
+            return None
+        # الاسم الكامل إن وجد، وإلا الإيميل
+        return obj.created_by.get_full_name() or obj.created_by.email
+
 class MedicalRecordDetailSerializer(serializers.ModelSerializer):
     patient_id = serializers.IntegerField(source="patient.id", read_only=True)
+    patient_name = serializers.SerializerMethodField()
+
     my_dek_envelope = serializers.SerializerMethodField()
     documents = MedicalDocumentMetaSerializer(many=True)
+
     class Meta:
         model = MedicalRecord
         fields = [
             "id",
             "patient_id",
+            "patient_name",   # ✅ الجديد
             "status",
             "created_by",
             "created_at",
@@ -133,6 +163,24 @@ class MedicalRecordDetailSerializer(serializers.ModelSerializer):
             "my_dek_envelope",
             "documents",
         ]
+
+    def get_patient_name(self, obj):
+        """
+        Return patient's display name for UI (non-sensitive).
+        Priority:
+        - full name
+        - email
+        - fallback
+        """
+        patient = obj.patient
+        if not patient:
+            return None
+
+        full_name = patient.get_full_name()
+        if full_name:
+            return full_name
+
+        return patient.email  # fallback
 
     def get_my_dek_envelope(self, obj):
         user = self.context["request"].user
