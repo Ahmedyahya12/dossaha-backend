@@ -20,4 +20,13 @@ urlpatterns = [
         views.get_document_cipher,
         name="document_cipher",
     ),
+    #  sprint 3
+    path("doctors/lookup/", views.doctor_lookup, name="doctor_lookup"),
+    path("records/<int:record_id>/share/", views.share_record, name="share_record"),
+    path("records/shared-with-me/", views.list_shared_with_me, name="shared_with_me"),
+    path(
+        "records/<int:record_id>/revoke/",
+        views.revoke_record_access,
+        name="revoke_record_access",
+    ),
 ]

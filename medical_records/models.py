@@ -34,7 +34,6 @@ class MedicalRecord(models.Model):
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
-        
         related_name="created_records",
         limit_choices_to={"role": "MEDECIN"},
     )
@@ -51,13 +50,12 @@ class MedicalRecord(models.Model):
     # Permissions
     allowed_doctors = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
-        null=True,
         blank=True,
         related_name="shared_records",
         limit_choices_to={"role": "MEDECIN"},
     )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def touch_access(self):
@@ -85,7 +83,15 @@ class RecordKeyEnvelope(models.Model):
     key_fingerprint = models.CharField(
         max_length=80, null=True, blank=True
     )  # e.g. sha256:...
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True,null=True)
+    shared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="shared_envelopes",
+        limit_choices_to={"role": "MEDECIN"},
+    )
 
     is_active = models.BooleanField(default=True)  # revocation
 
@@ -101,8 +107,10 @@ class MedicalDocument(models.Model):
         MedicalRecord, on_delete=models.CASCADE, related_name="documents"
     )
 
-    document_type = models.CharField(max_length=30, choices=DocumentType.choices, default=DocumentType.CONSULT_NOTE)
-    title = models.CharField(max_length=200,null=True)
+    document_type = models.CharField(
+        max_length=30, choices=DocumentType.choices, default=DocumentType.CONSULT_NOTE
+    )
+    title = models.CharField(max_length=200, null=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -112,7 +120,7 @@ class MedicalDocument(models.Model):
         related_name="created_documents",
         limit_choices_to={"role": "MEDECIN"},
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     # E2EE: encrypted payload (AES-GCM)
     encrypted_payload = models.TextField(null=True)  # Base64 ciphertext

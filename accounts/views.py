@@ -23,6 +23,46 @@ from accounts.services.registration_service import (
     validate_registration_data,
 )
 
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+import re
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def rotate_keys(request):
+    public_key_pem = request.data.get("public_key_pem")
+    key_fingerprint = request.data.get("key_fingerprint")
+
+    if not public_key_pem or not key_fingerprint:
+        return Response({"detail": "Missing public_key_pem or key_fingerprint"}, status=400)
+
+    # (اختياري) validation بسيط
+    if "BEGIN PUBLIC KEY" not in public_key_pem:
+        return Response({"detail": "Invalid public key format"}, status=400)
+
+    if not re.match(r"^sha256:[A-Za-z0-9_-]{10,}$", key_fingerprint):
+        return Response({"detail": "Invalid fingerprint format"}, status=400)
+
+    profile = request.user.profile
+
+    # ✅ حماية: لا تغيّر المفاتيح إلا إذا المستخدم صرّح force=true
+    force = bool(request.data.get("force", False))
+
+    if profile.public_key_pem and profile.key_fingerprint:
+        if profile.key_fingerprint != key_fingerprint and not force:
+            return Response(
+                {"detail": "KEY_ROTATION_REQUIRED"},
+                status=status.HTTP_409_CONFLICT
+            )
+
+    profile.public_key_pem = public_key_pem
+    profile.key_fingerprint = key_fingerprint
+    profile.save(update_fields=["public_key_pem", "key_fingerprint"])
+
+    return Response({"detail": "KEYS_ROTATED"}, status=200)
+
 
 def _extract_pem_b64(pem: str) -> str:
     """Extract base64 body from a PEM string."""

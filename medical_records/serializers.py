@@ -6,7 +6,39 @@ from django.utils import timezone
 from accounts.models import Role
 from common.user_account import User
 from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope
+from rest_framework import serializers
+from accounts.models import CustomUser, Role
 
+
+class DoctorLookupSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    public_key_pem = serializers.CharField(source="profile.public_key_pem", read_only=True)
+    key_fingerprint = serializers.CharField(source="profile.key_fingerprint", read_only=True)
+    sig_key_fingerprint=serializers.CharField(source="profile.sig_key_fingerprint", read_only=True)
+    sig_public_key_pem=serializers.CharField(source="profile.sig_public_key_pem", read_only=True)
+    class Meta:
+        model = CustomUser
+        fields = ["id", "email", "name", "public_key_pem", "key_fingerprint", "sig_key_fingerprint", "sig_public_key_pem"]
+
+    def get_name(self, obj):
+        return obj.get_full_name() or obj.email
+
+
+class ShareRecordSerializer(serializers.Serializer):
+    doctor_email = serializers.EmailField()
+    dek_envelope = serializers.DictField()
+
+    def validate_dek_envelope(self, value):
+        if "encrypted_dek" not in value:
+            raise serializers.ValidationError("encrypted_dek is required")
+        # key_fingerprint optional but recommended
+        return value
+
+class RevokeShareSerializer(serializers.Serializer):
+    doctor_id = serializers.IntegerField()
+
+
+# sprint 3
 
 class RecordKeyEnvelopeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -140,7 +172,6 @@ class MedicalDocumentMetaSerializer(serializers.ModelSerializer):
     def get_created_by_name(self, obj):
         if not obj.created_by:
             return None
-        # الاسم الكامل إن وجد، وإلا الإيميل
         return obj.created_by.get_full_name() or obj.created_by.email
 
 class MedicalRecordDetailSerializer(serializers.ModelSerializer):
