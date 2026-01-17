@@ -88,6 +88,8 @@ class MedecinProfile(models.Model):
     sig_public_key_pem = models.TextField(null=True, blank=True)
     sig_key_fingerprint = models.CharField(max_length=80, null=True, blank=True, db_index=True)
 
+    sig_key_uploaded_at = models.DateTimeField(null=True, blank=True)
+
     
     def __str__(self):
         return self.user.email

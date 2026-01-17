@@ -29,6 +29,45 @@ from rest_framework.response import Response
 from rest_framework import status
 import re
 
+
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework import status
+
+from .serializers import SigningKeyUploadSerializer
+from medical_records.permissions import IsActiveVerifiedMedecin
+
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def upload_signing_key(request):
+    """
+    POST /accounts/keys/signing/
+    Body: { "sig_public_key_pem": "-----BEGIN PUBLIC KEY-----...", "sig_key_fingerprint": "sha256:..." }
+    """
+    user = request.user
+    profile = getattr(user, "profile", None)
+    if not profile:
+        return Response({"detail": "No profile"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sig_public = request.data.get("sig_public_key_pem")
+    sig_fp = request.data.get("sig_key_fingerprint")
+
+    if not sig_public or not sig_fp:
+        return Response(
+            {"detail": "sig_public_key_pem and sig_key_fingerprint are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    profile.sig_public_key_pem = sig_public
+    profile.sig_key_fingerprint = sig_fp
+    profile.sig_key_uploaded_at = timezone.now()
+    profile.save(update_fields=["sig_public_key_pem", "sig_key_fingerprint", "sig_key_uploaded_at"])
+
+    return Response({"ok": True, "sig_key_fingerprint": sig_fp}, status=status.HTTP_200_OK)
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def rotate_keys(request):

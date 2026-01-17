@@ -12,6 +12,7 @@ urlpatterns = [
     path("me/", views.get_current_user),
      path("patients/", views.list_patients),
      path("profile/keys/rotate/", views.rotate_keys, name="rotate-keys"),
+      path("keys/signing/", views.upload_signing_key, name="keys-signing"),
 
     # path("profile/", views.update_medecin_profile),
     # path("keys/public/", views.upload_public_key),

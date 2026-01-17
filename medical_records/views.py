@@ -185,37 +185,40 @@ def get_document(request, record_id: int, doc_id: int):
 def get_document_cipher(request, record_id: int, doc_id: int):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
+    # صلاحيات الوصول
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
+    # لازم يكون عنده envelope فعال
     has_env = record.key_envelopes.filter(doctor=request.user, is_active=True).exists()
     if not has_env:
-        return Response(
-            {"detail": "No active DEK envelope"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+        return Response({"detail": "No active DEK envelope"}, status=status.HTTP_403_FORBIDDEN)
 
-    # ✅ select_related لتفادي queries إضافية
+    # doc + signer profile (لتفادي queries)
     doc = get_object_or_404(
         MedicalDocument.objects.select_related("signed_by", "signed_by__profile"),
         id=doc_id,
         record=record,
     )
 
+    # signer info
     signed_by_data = None
+    signer_profile = None
+
     if doc.signed_by:
-        profile = getattr(doc.signed_by, "profile", None)
+        signer_profile = getattr(doc.signed_by, "profile", None)
+
         signed_by_data = {
             "id": doc.signed_by.id,
             "name": doc.signed_by.get_full_name() or doc.signed_by.email,
 
             # ✅ مفاتيح التوقيع (RSA-PSS) للتحقق
-            "sig_public_key_pem": getattr(profile, "sig_public_key_pem", None),
-            "sig_key_fingerprint": getattr(profile, "sig_key_fingerprint", None),
+            "sig_public_key_pem": getattr(signer_profile, "sig_public_key_pem", None),
+            "sig_key_fingerprint": getattr(signer_profile, "sig_key_fingerprint", None),
 
-            # (اختياري) إذا تحتاج مفتاح التشفير OAEP لأشياء أخرى
-            # "enc_public_key_pem": getattr(profile, "public_key_pem", None),
-            # "enc_key_fingerprint": getattr(profile, "key_fingerprint", None),
+            # ✅ (اختياري) نحتفظ بالمفاتيح القديمة OAEP (ما يكسر القديم)
+            "public_key_pem": getattr(signer_profile, "public_key_pem", None),
+            "key_fingerprint": getattr(signer_profile, "key_fingerprint", None),
         }
 
     return Response(
@@ -231,12 +234,12 @@ def get_document_cipher(request, record_id: int, doc_id: int):
             "payload_tag": doc.payload_tag,
 
             # integrity + signature
-            "payload_hash": doc.payload_hash,
-            "signature": doc.signature,
-            "signed_by": signed_by_data,
+            "payload_hash": doc.payload_hash,             # موجود سابقًا
+            "signature": doc.signature,                   # موجود سابقًا
+            "signed_by": signed_by_data,                  # كان موجود عندك (مع إضافة sig fields)
             "signed_at": doc.signed_at,
 
-            # ✅ fingerprint المفتاح الذي استُخدم وقت التوقيع
+            # ✅ fingerprint المفتاح الذي استُخدم وقت التوقيع (للتحقق من rotation)
             "signing_key_fingerprint": doc.signing_key_fingerprint,
         },
         status=status.HTTP_200_OK,

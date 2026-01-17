@@ -1,6 +1,27 @@
 from rest_framework import serializers
 from accounts.models import CustomUser, MedecinProfile
 
+from rest_framework import serializers
+
+class SigningKeyUploadSerializer(serializers.Serializer):
+    sig_public_key_pem = serializers.CharField()
+    sig_key_fingerprint = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate_sig_public_key_pem(self, v: str):
+        v = (v or "").strip()
+        if "BEGIN PUBLIC KEY" not in v:
+            raise serializers.ValidationError("Invalid PEM public key")
+        return v
+
+    def validate_sig_key_fingerprint(self, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        if v and not v.startswith("sha256:"):
+            raise serializers.ValidationError("Fingerprint must start with sha256:")
+        return v
+
+
 class PatientLiteSerializer(serializers.ModelSerializer):
     code = serializers.SerializerMethodField()
     label = serializers.SerializerMethodField()
