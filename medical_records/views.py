@@ -4,6 +4,9 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
+# views.py
+from django.db import transaction
+
 
 from rest_framework import status as http_status
 
@@ -12,14 +15,17 @@ from dossahabackend import settings
 from medical_records.services.email_service import send_share_email
 from medical_records.services.security_log import log_event
 
-from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope, SecurityEventType
+from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope, RecordStatus, Referral, ReferralStatus, SecurityEventType
 from .serializers import (
     DoctorLookupSerializer,
+    MedicalDocumentUpdateSerializer,
     MedicalRecordCreateSerializer,
     MedicalRecordListSerializer,
     MedicalRecordDetailSerializer,
     MedicalDocumentCreateSerializer,
     MedicalDocumentDetailSerializer,
+    ReferralCreateSerializer,
+    ReferralListSerializer,
     RevokeShareSerializer,
     ShareRecordSerializer,
     SharedDoctorSerializer,
@@ -53,6 +59,163 @@ def _require_owner(user, record: MedicalRecord):
         )
     return None
 
+
+@api_view(["PATCH"])
+@permission_classes([IsActiveVerifiedMedecin])
+def update_document(request, record_id: int, doc_id: int):
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    # ✅ تحقق صلاحية الوصول
+    if not _can_access_record(request.user, record):
+        return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    # ✅ ممنوع تعديل إذا ARCHIVED (اختياري لكن منطقي)
+    if record.status == RecordStatus.ARCHIVED:
+        return Response({"detail": "Record archived (read-only)."}, status=status.HTTP_409_CONFLICT)
+
+    doc = get_object_or_404(MedicalDocument, id=doc_id, record=record)
+
+    ser = MedicalDocumentUpdateSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    data = ser.validated_data
+
+    # ✅ تحديث البيانات
+    if "title" in data:
+        doc.title = data["title"]
+    if "document_type" in data:
+        doc.document_type = data["document_type"]
+
+    doc.encrypted_payload = data["encrypted_payload"]
+    doc.payload_iv = data["payload_iv"]
+    doc.payload_tag = data["payload_tag"]
+
+    doc.payload_hash = data["payload_hash"]
+    doc.signature = data["signature"]
+    doc.signing_key_fingerprint = data.get("signing_key_fingerprint")
+
+    if hasattr(doc, "updated_by"):
+        doc.updated_by = request.user
+
+    doc.save()
+
+   
+    try:
+        log_event(
+            record=record,
+            event_type="DOCUMENT_UPDATED",
+            user=request.user, 
+               
+            metadata={"doc_id": doc.id, "doc_type": doc.document_type},
+        )
+    except Exception:
+        pass
+
+    return Response(MedicalDocumentDetailSerializer(doc).data, status=status.HTTP_200_OK)
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def create_referral(request, record_id):
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    if record.status != RecordStatus.OPEN:
+        return Response({"detail":"Record read-only."}, status=400)
+
+    if record.created_by_id != request.user.id:
+        return Response({"detail":"Only owner can refer."}, status=403)
+
+    ser = ReferralCreateSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    to_doctor_id = ser.validated_data["to_doctor_id"]
+
+    to_doctor = get_object_or_404(CustomUser, id=to_doctor_id, role=Role.MEDECIN)
+
+    ref = Referral.objects.create(
+        record=record,
+        from_doctor=request.user,
+        to_doctor=to_doctor,
+        reason=ser.validated_data.get("reason",""),
+        encrypted_dek=ser.validated_data["encrypted_dek"],
+        key_fingerprint=ser.validated_data.get("key_fingerprint") or None,
+    )
+
+    log_event(
+        record=record,
+        actor=request.user,
+        event_type=SecurityEventType.RECORD_REFERRAL_CREATED,
+        request=request,
+        target_doctor=to_doctor
+    )
+
+    return Response(ReferralListSerializer(ref).data, status=201)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def list_referrals_received(request):
+    qs = Referral.objects.filter(to_doctor=request.user).order_by("-id")
+    return Response(ReferralListSerializer(qs, many=True).data)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def list_referrals_sent(request):
+    qs = Referral.objects.filter(from_doctor=request.user).order_by("-id")
+    return Response(ReferralListSerializer(qs, many=True).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def accept_referral(request, referral_id):
+    ref = get_object_or_404(Referral, id=referral_id)
+
+    if ref.to_doctor_id != request.user.id:
+        return Response({"detail":"Not allowed."}, status=403)
+
+    if ref.status != ReferralStatus.PENDING:
+        return Response({"detail":"Referral not pending."}, status=400)
+
+    record = ref.record
+    if record.status != RecordStatus.OPEN:
+        return Response({"detail":"Record read-only."}, status=400)
+
+    # ✅ grant access
+    record.allowed_doctors.add(request.user)
+
+    env, _ = RecordKeyEnvelope.objects.update_or_create(
+        record=record,
+        doctor=request.user,
+        defaults=dict(
+            encrypted_dek=ref.encrypted_dek,
+            key_fingerprint=ref.key_fingerprint,
+            shared_by=ref.from_doctor,
+            is_active=True,
+        )
+    )
+
+    ref.status = ReferralStatus.ACCEPTED
+    ref.decided_at = timezone.now()
+    ref.save(update_fields=["status","decided_at"])
+
+    log_event(record=record, actor=request.user, event_type=SecurityEventType.RECORD_REFERRAL_ACCEPTED, request=request, target_doctor=request.user)
+    log_event(record=record, actor=ref.from_doctor, event_type=SecurityEventType.RECORD_SHARE, request=request, target_doctor=request.user)
+
+    return Response({"detail":"Referral accepted. Access granted."})
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def reject_referral(request, referral_id):
+    ref = get_object_or_404(Referral, id=referral_id)
+
+    if ref.to_doctor_id != request.user.id:
+        return Response({"detail":"Not allowed."}, status=403)
+
+    if ref.status != ReferralStatus.PENDING:
+        return Response({"detail":"Referral not pending."}, status=400)
+
+    ref.status = ReferralStatus.REJECTED
+    ref.decided_at = timezone.now()
+    ref.save(update_fields=["status","decided_at"])
+
+    log_event(record=ref.record, actor=request.user, event_type=SecurityEventType.RECORD_REFERRAL_REJECTED, request=request, target_doctor=request.user)
+    return Response({"detail":"Referral rejected."})
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -508,12 +671,21 @@ def share_record(request, record_id: int):
 
 @api_view(["GET"])
 @permission_classes([IsActiveVerifiedMedecin])
-def list_shared_with_me(request):
-    qs = MedicalRecord.objects.filter(allowed_doctors=request.user).order_by(
-        "-created_at"
+def list_shared_records(request):
+    user = request.user
+
+    qs = (
+        MedicalRecord.objects.filter(
+            allowed_doctors=user,
+            status__in=[RecordStatus.OPEN, RecordStatus.CLOSED],
+        )
+        .exclude(created_by=user)   # ✅ مهم: استبعد OWNER
+        .distinct()
+        .order_by("-updated_at")
     )
-    ser = MedicalRecordListSerializer(qs, many=True, context={"request": request})
-    return Response(ser.data)
+
+    data = MedicalRecordListSerializer(qs, many=True, context={"request": request}).data
+    return Response(data)
 
 
 @api_view(["POST"])

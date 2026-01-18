@@ -1,6 +1,40 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from django.conf import settings
+from django.db import models
+
+class ReferralStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    ACCEPTED = "ACCEPTED", "Accepted"
+    REJECTED = "REJECTED", "Rejected"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class Referral(models.Model):
+    record = models.ForeignKey("MedicalRecord", on_delete=models.CASCADE, related_name="referrals")
+
+    from_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="referrals_sent",
+        limit_choices_to={"role": "MEDECIN"},
+    )
+    to_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="referrals_received",
+        limit_choices_to={"role": "MEDECIN"},
+    )
+
+    status = models.CharField(max_length=16, choices=ReferralStatus.choices, default=ReferralStatus.PENDING)
+
+    reason = models.CharField(max_length=255, blank=True, default="")
+
+    encrypted_dek = models.TextField(null=True, blank=True)     # b64 RSA-encrypted DEK for to_doctor
+    key_fingerprint = models.CharField(max_length=80, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class RecordStatus(models.TextChoices):
@@ -18,8 +52,7 @@ class DocumentType(models.TextChoices):
 
 
 
-from django.conf import settings
-from django.db import models
+
 
 class SecurityEventType(models.TextChoices):
     RECORD_VIEW = "RECORD_VIEW", "Consultation du dossier"
@@ -28,7 +61,9 @@ class SecurityEventType(models.TextChoices):
     DOC_CREATE = "DOC_CREATE", "Ajout de document"
     RECORD_SHARE = "RECORD_SHARE", "Partage du dossier"
     RECORD_REVOKE = "RECORD_REVOKE", "Révocation d'accès"
-
+    RECORD_REFERRAL_CREATED = "RECORD_REFERRAL_CREATED", "Référence créée"
+    RECORD_REFERRAL_ACCEPTED = "RECORD_REFERRAL_ACCEPTED", "Référence acceptée"
+    RECORD_REFERRAL_REJECTED = "RECORD_REFERRAL_REJECTED", "Référence rejetée"
 
 class SecurityEvent(models.Model):
     record = models.ForeignKey("MedicalRecord", on_delete=models.CASCADE, related_name="security_events")

@@ -11,6 +11,40 @@ from accounts.models import CustomUser, Role
 
 from .models import SecurityEvent
 
+
+from .models import Referral
+
+
+
+class MedicalDocumentUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, allow_blank=True)
+    document_type = serializers.CharField(required=False)
+
+    encrypted_payload = serializers.CharField()
+    payload_iv = serializers.CharField()
+    payload_tag = serializers.CharField()
+
+    payload_hash = serializers.CharField()
+    signature = serializers.CharField()
+    signing_key_fingerprint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ReferralCreateSerializer(serializers.Serializer):
+    to_doctor_id = serializers.IntegerField()
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    encrypted_dek = serializers.CharField()
+    key_fingerprint = serializers.CharField(required=False, allow_blank=True, max_length=80)
+
+class ReferralListSerializer(serializers.ModelSerializer):
+    record_id = serializers.IntegerField(source="record.id", read_only=True)
+    from_doctor_name = serializers.CharField(source="from_doctor.get_full_name", read_only=True)
+    to_doctor_name = serializers.CharField(source="to_doctor.get_full_name", read_only=True)
+
+    class Meta:
+        model = Referral
+        fields = ["id", "record_id", "status", "reason", "created_at", "decided_at",
+                  "from_doctor_id", "from_doctor_name", "to_doctor_id", "to_doctor_name"]
+
 class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalRecord
@@ -78,13 +112,14 @@ class SharedDoctorSerializer(serializers.ModelSerializer):
 
 class DoctorLookupSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
+    specialite = serializers.CharField(source="profile.specialite", read_only=True)
     public_key_pem = serializers.CharField(source="profile.public_key_pem", read_only=True)
     key_fingerprint = serializers.CharField(source="profile.key_fingerprint", read_only=True)
     sig_key_fingerprint=serializers.CharField(source="profile.sig_key_fingerprint", read_only=True)
     sig_public_key_pem=serializers.CharField(source="profile.sig_public_key_pem", read_only=True)
     class Meta:
         model = CustomUser
-        fields = ["id", "email", "name", "public_key_pem", "key_fingerprint", "sig_key_fingerprint", "sig_public_key_pem"]
+        fields = ["id", "email", "name", "public_key_pem", "key_fingerprint", "sig_key_fingerprint", "sig_public_key_pem","specialite"]
 
     def get_name(self, obj):
         return obj.get_full_name() or obj.email

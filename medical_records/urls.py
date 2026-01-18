@@ -20,11 +20,16 @@ urlpatterns = [
         views.get_document_cipher,
         name="document_cipher",
     ),
+     path(
+        "records/<int:record_id>/documents/<int:doc_id>/update/",
+        views.update_document,
+        name="update_document",
+    ),
     path("records/<int:record_id>/update/", views.update_record),
     #  sprint 3
     path("doctors/lookup/", views.doctor_lookup, name="doctor_lookup"),
     path("records/<int:record_id>/share/", views.share_record, name="share_record"),
-    path("records/shared-with-me/", views.list_shared_with_me, name="shared_with_me"),
+    path("records/shared/", views.list_shared_records),
     path(
         "records/<int:record_id>/revoke/",
         views.revoke_record_access,
@@ -46,4 +51,9 @@ urlpatterns = [
     path(
         "records/<int:record_id>/restore/", views.restore_record, name="restore_record"
     ),
+    path("records/<int:record_id>/referrals/", views.create_referral),
+    path("referrals/received/", views.list_referrals_received),
+    path("referrals/sent/", views.list_referrals_sent),
+    path("referrals/<int:referral_id>/accept/", views.accept_referral),
+    path("referrals/<int:referral_id>/reject/", views.reject_referral),
 ]
