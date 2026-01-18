@@ -17,6 +17,40 @@ class DocumentType(models.TextChoices):
     DISCHARGE_SUMMARY = "DISCHARGE_SUMMARY", "Discharge Summary"
 
 
+
+from django.conf import settings
+from django.db import models
+
+class SecurityEventType(models.TextChoices):
+    RECORD_VIEW = "RECORD_VIEW", "Consultation du dossier"
+    DOC_VIEW = "DOC_VIEW", "Consultation du document"
+    DOC_DOWNLOAD = "DOC_DOWNLOAD", "Téléchargement du document"
+    DOC_CREATE = "DOC_CREATE", "Ajout de document"
+    RECORD_SHARE = "RECORD_SHARE", "Partage du dossier"
+    RECORD_REVOKE = "RECORD_REVOKE", "Révocation d'accès"
+
+
+class SecurityEvent(models.Model):
+    record = models.ForeignKey("MedicalRecord", on_delete=models.CASCADE, related_name="security_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="security_events")
+    event_type = models.CharField(max_length=30, choices=SecurityEventType.choices)
+
+    # Optional context
+    doc = models.ForeignKey("MedicalDocument", null=True, blank=True, on_delete=models.SET_NULL)
+    target_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="security_events_target"
+    )
+
+    ip = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+
 class MedicalRecord(models.Model):
     """
     dossier = metadata

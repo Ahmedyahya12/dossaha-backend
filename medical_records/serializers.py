@@ -9,6 +9,72 @@ from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope
 from rest_framework import serializers
 from accounts.models import CustomUser, Role
 
+from .models import SecurityEvent
+
+class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalRecord
+        fields = ["status"]  
+         
+
+class SecurityEventSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+    target_doctor_name = serializers.SerializerMethodField()
+    doc_title = serializers.CharField(source="doc.title", read_only=True)
+
+    class Meta:
+        model = SecurityEvent
+        fields = [
+            "id",
+            "event_type",
+            "created_at",
+            "actor_name",
+            "target_doctor_name",
+            "doc_id",
+            "doc_title",
+            "ip",
+        ]
+
+    def get_actor_name(self, obj):
+        u = obj.actor
+        return (u.get_full_name() or u.email) if u else None
+
+    def get_target_doctor_name(self, obj):
+        u = obj.target_doctor
+        return (u.get_full_name() or u.email) if u else None
+
+
+class SharedDoctorSerializer(serializers.ModelSerializer):
+    doctor_id = serializers.IntegerField(source="doctor.id", read_only=True)
+    doctor_name = serializers.SerializerMethodField()
+    doctor_email = serializers.EmailField(source="doctor.email", read_only=True)
+
+    shared_by_id = serializers.IntegerField(source="shared_by.id", read_only=True, allow_null=True)
+    shared_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RecordKeyEnvelope
+        fields = [
+            "doctor_id",
+            "doctor_name",
+            "doctor_email",
+            "shared_by_id",
+            "shared_by_name",
+            "created_at",
+            "is_active",
+        ]
+
+    def get_doctor_name(self, obj):
+        u = obj.doctor
+        if not u:
+            return None
+        return (u.get_full_name() or u.email)
+
+    def get_shared_by_name(self, obj):
+        u = obj.shared_by
+        if not u:
+            return None
+        return (u.get_full_name() or u.email)
 
 class DoctorLookupSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()

@@ -3,6 +3,39 @@ from accounts.models import CustomUser, MedecinProfile
 
 from rest_framework import serializers
 
+
+from rest_framework import serializers
+from accounts.models import CustomUser, Role, PatientProfile
+
+class PatientListSerializer(serializers.ModelSerializer):
+    code = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = ["id", "code", "email", "full_name", "first_name", "last_name", "created_at"]
+
+    def get_code(self, obj):
+        return f"PAT-{str(obj.id).zfill(4)}"
+
+    def get_full_name(self, obj):
+        name = (obj.get_full_name() or "").strip()
+        return name if name else None
+
+
+class PatientCreateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=80)
+    last_name = serializers.CharField(max_length=80)
+    email = serializers.EmailField()
+
+    def validate_email(self, v):
+        v = v.strip().lower()
+        if CustomUser.objects.filter(email=v).exists():
+            raise serializers.ValidationError("Email already exists")
+        return v
+
+
+
 class SigningKeyUploadSerializer(serializers.Serializer):
     sig_public_key_pem = serializers.CharField()
     sig_key_fingerprint = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -22,19 +55,7 @@ class SigningKeyUploadSerializer(serializers.Serializer):
         return v
 
 
-class PatientLiteSerializer(serializers.ModelSerializer):
-    code = serializers.SerializerMethodField()
-    label = serializers.SerializerMethodField()
 
-    class Meta:
-        model = CustomUser
-        fields = ["id", "code", "label"]
-
-    def get_code(self, obj):
-        return f"PT-{str(obj.id).zfill(4)}"
-
-    def get_label(self, obj):
-        return f"Patient #{str(obj.id).zfill(4)}"
     
 
 class MedecinProfileSerializer(serializers.ModelSerializer):

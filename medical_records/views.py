@@ -8,8 +8,9 @@ from rest_framework import status
 from accounts.models import CustomUser, Role
 from dossahabackend import settings
 from medical_records.services.email_service import send_share_email
+from medical_records.services.security_log import log_event
 
-from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope
+from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope, SecurityEventType
 from .serializers import (
     DoctorLookupSerializer,
     MedicalRecordCreateSerializer,
@@ -19,15 +20,82 @@ from .serializers import (
     MedicalDocumentDetailSerializer,
     RevokeShareSerializer,
     ShareRecordSerializer,
+    SharedDoctorSerializer,
 )
 from .permissions import IsActiveVerifiedMedecin
 from django.core.mail import send_mail
+from rest_framework.permissions import IsAuthenticated
+from .models import SecurityEvent
+from .serializers import SecurityEventSerializer
 
 
 def _can_access_record(user, record: MedicalRecord) -> bool:
     if record.created_by_id == user.id:
         return True
     return record.allowed_doctors.filter(id=user.id).exists()
+
+
+from rest_framework import status as drf_status
+from .serializers import MedicalRecordUpdateSerializer
+from .permissions import IsActiveVerifiedMedecin
+
+def _is_owner(user, record: MedicalRecord):
+    return record.created_by_id == user.id
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def update_record(request, record_id: int):
+    """
+    PATCH /api/records/<id>/
+    """
+    record = MedicalRecord.objects.filter(id=record_id).first()
+    if not record:
+        return Response({"detail": "Record introuvable."}, status=404)
+
+    if not _is_owner(request.user, record):
+        return Response({"detail": "Seul le propriétaire peut modifier ce dossier."}, status=403)
+
+    ser = MedicalRecordUpdateSerializer(record, data=request.data, partial=True)
+    ser.is_valid(raise_exception=True)
+    ser.save()
+
+    return Response({"detail": "Dossier mis à jour.", "record": ser.data}, status=drf_status.HTTP_200_OK)
+
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def list_security_events(request, record_id: int):
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    if not _can_access_record(request.user, record):
+        return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    qs = SecurityEvent.objects.filter(record=record).select_related("actor", "target_doctor", "doc")[:20]
+    return Response(SecurityEventSerializer(qs, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def list_record_shared_doctors(request, record_id: int):
+    """
+    GET /api/records/<record_id>/shared-doctors/
+    """
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    if not _can_access_record(request.user, record):
+        return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    qs = (
+        RecordKeyEnvelope.objects.select_related("doctor", "shared_by")
+        .filter(record=record, is_active=True)
+        .exclude(doctor_id=record.created_by_id)  # ✅ لا نعرض owner كـ shared
+        .order_by("-created_at")
+    )
+
+    return Response(
+        SharedDoctorSerializer(qs, many=True).data, status=status.HTTP_200_OK
+    )
 
 
 @api_view(["POST"])
@@ -107,6 +175,7 @@ def get_record_detail(request, record_id: int):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
     record.touch_access()
+    log_event(request=request, record=record, event_type=SecurityEventType.RECORD_VIEW)
 
     ser = MedicalRecordDetailSerializer(record, context={"request": request})
     return Response(ser.data)
@@ -149,6 +218,9 @@ def create_document(request, record_id: int):
         signed_at=timezone.now(),
         signing_key_fingerprint=data.get("signing_key_fingerprint"),
     )
+    log_event(
+        request=request, record=record, doc=doc, event_type=SecurityEventType.DOC_CREATE
+    )
 
     return Response(
         {"id": doc.id, "record_id": record.id, "title": doc.title},
@@ -185,41 +257,40 @@ def get_document(request, record_id: int, doc_id: int):
 def get_document_cipher(request, record_id: int, doc_id: int):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
-    # صلاحيات الوصول
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-    # لازم يكون عنده envelope فعال
     has_env = record.key_envelopes.filter(doctor=request.user, is_active=True).exists()
     if not has_env:
-        return Response({"detail": "No active DEK envelope"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "No active DEK envelope"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
-    # doc + signer profile (لتفادي queries)
+    # ✅ select_related لتفادي queries إضافية
     doc = get_object_or_404(
         MedicalDocument.objects.select_related("signed_by", "signed_by__profile"),
         id=doc_id,
         record=record,
     )
 
-    # signer info
     signed_by_data = None
-    signer_profile = None
-
     if doc.signed_by:
-        signer_profile = getattr(doc.signed_by, "profile", None)
-
+        profile = getattr(doc.signed_by, "profile", None)
         signed_by_data = {
             "id": doc.signed_by.id,
             "name": doc.signed_by.get_full_name() or doc.signed_by.email,
-
             # ✅ مفاتيح التوقيع (RSA-PSS) للتحقق
-            "sig_public_key_pem": getattr(signer_profile, "sig_public_key_pem", None),
-            "sig_key_fingerprint": getattr(signer_profile, "sig_key_fingerprint", None),
-
-            # ✅ (اختياري) نحتفظ بالمفاتيح القديمة OAEP (ما يكسر القديم)
-            "public_key_pem": getattr(signer_profile, "public_key_pem", None),
-            "key_fingerprint": getattr(signer_profile, "key_fingerprint", None),
+            "sig_public_key_pem": getattr(profile, "sig_public_key_pem", None),
+            "sig_key_fingerprint": getattr(profile, "sig_key_fingerprint", None),
+            # (اختياري) إذا تحتاج مفتاح التشفير OAEP لأشياء أخرى
+            # "enc_public_key_pem": getattr(profile, "public_key_pem", None),
+            # "enc_key_fingerprint": getattr(profile, "key_fingerprint", None),
         }
+
+    log_event(
+        request=request, record=record, doc=doc, event_type=SecurityEventType.DOC_VIEW
+    )
 
     return Response(
         {
@@ -227,23 +298,21 @@ def get_document_cipher(request, record_id: int, doc_id: int):
             "record_id": record.id,
             "title": doc.title,
             "document_type": doc.document_type,
-
             # ciphertext (AES-GCM)
             "encrypted_payload": doc.encrypted_payload,
             "payload_iv": doc.payload_iv,
             "payload_tag": doc.payload_tag,
-
             # integrity + signature
-            "payload_hash": doc.payload_hash,             # موجود سابقًا
-            "signature": doc.signature,                   # موجود سابقًا
-            "signed_by": signed_by_data,                  # كان موجود عندك (مع إضافة sig fields)
+            "payload_hash": doc.payload_hash,
+            "signature": doc.signature,
+            "signed_by": signed_by_data,
             "signed_at": doc.signed_at,
-
-            # ✅ fingerprint المفتاح الذي استُخدم وقت التوقيع (للتحقق من rotation)
+            # ✅ fingerprint المفتاح الذي استُخدم وقت التوقيع
             "signing_key_fingerprint": doc.signing_key_fingerprint,
         },
         status=status.HTTP_200_OK,
     )
+
 
 # sprint 3 started here
 
@@ -332,6 +401,12 @@ def share_record(request, record_id: int):
         env.save(
             update_fields=["encrypted_dek", "key_fingerprint", "is_active", "shared_by"]
         )
+    log_event(
+        request=request,
+        record=record,
+        target_doctor=target,
+        event_type=SecurityEventType.RECORD_SHARE,
+    )
 
     return Response(
         {"detail": "Record shared/updated successfully", "record_id": record.id},
@@ -374,20 +449,21 @@ def list_shared_with_me(request):
     ser = MedicalRecordListSerializer(qs, many=True, context={"request": request})
     return Response(ser.data)
 
-
 @api_view(["POST"])
-@permission_classes([IsActiveVerifiedMedecin])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
 def revoke_record_access(request, record_id: int):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
     if record.created_by_id != request.user.id:
-        return Response(
-            {"detail": "Only owner can revoke"}, status=status.HTTP_403_FORBIDDEN
-        )
+        return Response({"detail": "Only owner can revoke"}, status=status.HTTP_403_FORBIDDEN)
 
     ser = RevokeShareSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
     doctor_id = ser.validated_data["doctor_id"]
+
+    target = CustomUser.objects.filter(id=doctor_id, role=Role.MEDECIN).first()
+    if not target:
+        return Response({"detail": "Target doctor not found"}, status=status.HTTP_404_NOT_FOUND)
 
     env = RecordKeyEnvelope.objects.filter(record=record, doctor_id=doctor_id).first()
     if env:
@@ -396,4 +472,11 @@ def revoke_record_access(request, record_id: int):
 
     record.allowed_doctors.remove(doctor_id)
 
-    return Response({"detail": "Access revoked", "doctor_id": doctor_id})
+    log_event(
+        request=request,
+        record=record,
+        target_doctor=target,
+        event_type=SecurityEventType.RECORD_REVOKE,
+    )
+
+    return Response({"detail": "Access revoked", "doctor_id": doctor_id}, status=status.HTTP_200_OK)

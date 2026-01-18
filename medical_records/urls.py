@@ -29,4 +29,15 @@ urlpatterns = [
         views.revoke_record_access,
         name="revoke_record_access",
     ),
+    path(
+        "records/<int:record_id>/shared-doctors/",
+        views.list_record_shared_doctors,
+        name="record_shared_doctors",
+    ),
+    path(
+        "records/<int:record_id>/security-events/",
+        views.list_security_events,
+        name="security_events",
+    ),
+    path("records/<int:record_id>/", views.update_record),
 ]

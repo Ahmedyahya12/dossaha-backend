@@ -7,6 +7,29 @@ from django.dispatch import receiver
 
 from .managers import CustomUserManager
 
+from django.conf import settings
+from django.db import models
+
+
+class PatientProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="patient_profile",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_patients",
+        limit_choices_to={"role": "MEDECIN"},
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PatientProfile({self.user.email})"
+
 
 class Specialite(models.TextChoices):
     GENERALISTE = "GENERALISTE", "Médecine générale"

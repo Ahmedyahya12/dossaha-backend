@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import ValidationError
 
 from accounts.models import CustomUser, Role
-from accounts.serializers import CurrentUserSerializer, PatientLiteSerializer, SignUpSerializer
+from accounts.serializers import CurrentUserSerializer, SignUpSerializer,PatientListSerializer
 from accounts.services.activation_serice import activate_user_and_profile, validate_activation_token
 from accounts.services.registration_service import (
     build_activation_link,
@@ -34,10 +34,69 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
-
-from .serializers import SigningKeyUploadSerializer
 from medical_records.permissions import IsActiveVerifiedMedecin
 
+
+import secrets
+from django.db import transaction
+
+
+from accounts.models import PatientProfile
+from accounts.serializers import PatientListSerializer, PatientCreateSerializer
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def my_patients(request):
+    """
+    GET /accounts/patients/
+    retourne les patients créés par le médecin connecté
+    """
+    qs = CustomUser.objects.filter(
+        role=Role.PATIENT,
+        patient_profile__created_by=request.user
+    ).order_by("-id")
+
+    return Response(PatientListSerializer(qs, many=True).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def create_patient(request):
+    """
+    POST /accounts/patients/create/
+    Body: { first_name, last_name, email }
+    """
+    ser = PatientCreateSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    data = ser.validated_data
+
+    temp_password = secrets.token_urlsafe(10)  # mot de passe temporaire
+
+    with transaction.atomic():
+        patient = CustomUser.objects.create(
+            email=data["email"],
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            role=Role.PATIENT,
+            status="ACTIVE",           # ou PENDING selon ta logique
+            is_email_verified=False,   # tu peux gérer après
+        )
+        patient.set_password(temp_password)
+        patient.save()
+
+        PatientProfile.objects.create(
+            user=patient,
+            created_by=request.user
+        )
+
+    return Response(
+        {
+            "id": patient.id,
+            "email": patient.email,
+            "temp_password": temp_password,  # ✅ pour MVP (à retirer plus tard et envoyer par email)
+        },
+        status=status.HTTP_201_CREATED
+    )
 
 
 @api_view(["POST"])
@@ -277,4 +336,4 @@ def list_patients(request):
         qs = qs.filter(id__icontains=q)
 
     qs = qs.order_by("id")[:20]
-    return Response(PatientLiteSerializer(qs, many=True).data)
+    return Response(PatientListSerializer(qs, many=True).data)
