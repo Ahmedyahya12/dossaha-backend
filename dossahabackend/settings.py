@@ -34,8 +34,8 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS if h.strip()]
 
 # Application definition
 
@@ -66,11 +66,19 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # ton frontend local
-    # "http://192.168.xxx.xxx:5173"  # IP si besoin
-]
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:3000",  # ton frontend local
+#     # "http://192.168.xxx.xxx:5173"  # IP si besoin
+# ]
 
+
+FRONTEND_URL = env("FRONTEND_URL")
+
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", FRONTEND_URL).split(",")
+CORS_ALLOWED_ORIGINS = [x.strip() for x in CORS_ALLOWED_ORIGINS if x.strip()]
+
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", FRONTEND_URL).split(",")
+CSRF_TRUSTED_ORIGINS = [x.strip() for x in CSRF_TRUSTED_ORIGINS if x.strip()]
 CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = "dossahabackend.urls"
@@ -197,5 +205,3 @@ BASE_URL = env("BASE_URL")
 
 
 FRONTEND_ACTIVATE_URL=env("FRONTEND_ACTIVATE_URL")
-
-FRONTEND_URL = env("FRONTEND_URL")
