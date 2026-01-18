@@ -20,6 +20,7 @@ urlpatterns = [
         views.get_document_cipher,
         name="document_cipher",
     ),
+    path("records/<int:record_id>/update/", views.update_record),
     #  sprint 3
     path("doctors/lookup/", views.doctor_lookup, name="doctor_lookup"),
     path("records/<int:record_id>/share/", views.share_record, name="share_record"),
@@ -39,5 +40,10 @@ urlpatterns = [
         views.list_security_events,
         name="security_events",
     ),
-    path("records/<int:record_id>/", views.update_record),
+    path(
+        "records/<int:record_id>/archive/", views.archive_record, name="archive_record"
+    ),
+    path(
+        "records/<int:record_id>/restore/", views.restore_record, name="restore_record"
+    ),
 ]

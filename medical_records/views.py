@@ -5,6 +5,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 
+from rest_framework import status as http_status
+
 from accounts.models import CustomUser, Role
 from dossahabackend import settings
 from medical_records.services.email_service import send_share_email
@@ -28,6 +30,10 @@ from rest_framework.permissions import IsAuthenticated
 from .models import SecurityEvent
 from .serializers import SecurityEventSerializer
 
+from rest_framework import status as drf_status
+from .serializers import MedicalRecordUpdateSerializer
+from .permissions import IsActiveVerifiedMedecin
+
 
 def _can_access_record(user, record: MedicalRecord) -> bool:
     if record.created_by_id == user.id:
@@ -35,12 +41,61 @@ def _can_access_record(user, record: MedicalRecord) -> bool:
     return record.allowed_doctors.filter(id=user.id).exists()
 
 
-from rest_framework import status as drf_status
-from .serializers import MedicalRecordUpdateSerializer
-from .permissions import IsActiveVerifiedMedecin
-
 def _is_owner(user, record: MedicalRecord):
     return record.created_by_id == user.id
+
+
+def _require_owner(user, record: MedicalRecord):
+    if record.created_by_id != user.id:
+        return Response(
+            {"detail": "Seul le propriétaire peut effectuer cette action."},
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def archive_record(request, record_id: int):
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    denied = _require_owner(request.user, record)
+    if denied:
+        return denied
+
+    if record.status == "ARCHIVED":
+        return Response(
+            {"detail": "Dossier déjà archivé."}, status=http_status.HTTP_400_BAD_REQUEST
+        )
+
+    record.status = "ARCHIVED"
+    record.save(update_fields=["status"])
+
+    # option: log security event هنا
+    return Response({"detail": "Dossier archivé ", "status": record.status})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
+def restore_record(request, record_id: int):
+    record = get_object_or_404(MedicalRecord, id=record_id)
+
+    denied = _require_owner(request.user, record)
+    if denied:
+        return denied
+
+    if record.status != "ARCHIVED":
+        return Response(
+            {"detail": "Dossier n'est pas archivé."},
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    record.status = "OPEN"
+    record.save(update_fields=["status"])
+
+    # option: log security event هنا
+    return Response({"detail": "Dossier restauré ✅", "status": record.status})
+
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -53,14 +108,18 @@ def update_record(request, record_id: int):
         return Response({"detail": "Record introuvable."}, status=404)
 
     if not _is_owner(request.user, record):
-        return Response({"detail": "Seul le propriétaire peut modifier ce dossier."}, status=403)
+        return Response(
+            {"detail": "Seul le propriétaire peut modifier ce dossier."}, status=403
+        )
 
     ser = MedicalRecordUpdateSerializer(record, data=request.data, partial=True)
     ser.is_valid(raise_exception=True)
     ser.save()
 
-    return Response({"detail": "Dossier mis à jour.", "record": ser.data}, status=drf_status.HTTP_200_OK)
-
+    return Response(
+        {"detail": "Dossier mis à jour.", "record": ser.data},
+        status=drf_status.HTTP_200_OK,
+    )
 
 
 @api_view(["GET"])
@@ -71,7 +130,9 @@ def list_security_events(request, record_id: int):
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-    qs = SecurityEvent.objects.filter(record=record).select_related("actor", "target_doctor", "doc")[:20]
+    qs = SecurityEvent.objects.filter(record=record).select_related(
+        "actor", "target_doctor", "doc"
+    )[:20]
     return Response(SecurityEventSerializer(qs, many=True).data)
 
 
@@ -189,6 +250,9 @@ def create_document(request, record_id: int):
     Body: encrypted payload + signature metadata
     """
     record = MedicalRecord.objects.get(id=record_id)
+
+    if record.status in ["CLOSED", "ARCHIVED"]:
+        return Response({"detail": "Dossier en lecture seule."}, status=400)
 
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
@@ -355,6 +419,8 @@ def share_record(request, record_id: int):
             {"detail": "Only owner can share this record"},
             status=status.HTTP_403_FORBIDDEN,
         )
+    if record.status in ["CLOSED", "ARCHIVED"]:
+        return Response({"detail": "Dossier en lecture seule."}, status=400)
 
     ser = ShareRecordSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -449,13 +515,19 @@ def list_shared_with_me(request):
     ser = MedicalRecordListSerializer(qs, many=True, context={"request": request})
     return Response(ser.data)
 
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
 def revoke_record_access(request, record_id: int):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
     if record.created_by_id != request.user.id:
-        return Response({"detail": "Only owner can revoke"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "Only owner can revoke"}, status=status.HTTP_403_FORBIDDEN
+        )
+
+    if record.status in ["CLOSED", "ARCHIVED"]:
+        return Response({"detail": "Dossier en lecture seule."}, status=400)
 
     ser = RevokeShareSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -463,7 +535,9 @@ def revoke_record_access(request, record_id: int):
 
     target = CustomUser.objects.filter(id=doctor_id, role=Role.MEDECIN).first()
     if not target:
-        return Response({"detail": "Target doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"detail": "Target doctor not found"}, status=status.HTTP_404_NOT_FOUND
+        )
 
     env = RecordKeyEnvelope.objects.filter(record=record, doctor_id=doctor_id).first()
     if env:
@@ -479,4 +553,6 @@ def revoke_record_access(request, record_id: int):
         event_type=SecurityEventType.RECORD_REVOKE,
     )
 
-    return Response({"detail": "Access revoked", "doctor_id": doctor_id}, status=status.HTTP_200_OK)
+    return Response(
+        {"detail": "Access revoked", "doctor_id": doctor_id}, status=status.HTTP_200_OK
+    )
