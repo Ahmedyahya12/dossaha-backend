@@ -66,9 +66,8 @@ def update_document(request, record_id: int, doc_id: int):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
     # ✅ تحقق صلاحية الوصول
-    if not _can_access_record(request.user, record):
-        return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-
+    if record.created_by_id != request.user.id:
+      return Response({"detail": "Only owner can update documents."}, status=status.HTTP_403_FORBIDDEN)
     # ✅ ممنوع تعديل إذا ARCHIVED (اختياري لكن منطقي)
     if record.status == RecordStatus.ARCHIVED:
         return Response({"detail": "Record archived (read-only)."}, status=status.HTTP_409_CONFLICT)
@@ -322,41 +321,64 @@ def list_record_shared_doctors(request, record_id: int):
     )
 
 
+
 @api_view(["POST"])
 @permission_classes([IsActiveVerifiedMedecin])
 def create_record(request):
-    """
-    POST /api/records/
-    Body:
-    {
-      "patient_id": 12,
-      "dek_envelope": {"encrypted_dek": "...", "key_fingerprint": "sha256:..."}
-    }
-    """
     ser = MedicalRecordCreateSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
+
+    patient = ser.validated_data["patient"]
     dek_env = ser.validated_data["dek_envelope"]
     encrypted_dek = dek_env["encrypted_dek"]
     key_fingerprint = dek_env.get("key_fingerprint")
-    patient = ser.validated_data["patient"]
-    # Optionnel: vérifier cohérence avec le profile de l'utilisateur
-    profile_fp = getattr(
-        getattr(request.user, "profile", None), "key_fingerprint", None
-    )
-    # if profile_fp and key_fingerprint and profile_fp != key_fingerprint:
-    #   return Response({"detail": "Fingerprint mismatch"}, status=status.HTTP_400_BAD_REQUEST)
 
-    record = MedicalRecord.objects.create(
-        patient=patient,
-        created_by=request.user,
-    )
+    # ✅ منع race condition (طبيبين ينشئون في نفس الوقت)
+    with transaction.atomic():
 
-    RecordKeyEnvelope.objects.create(
-        record=record,
-        doctor=request.user,
-        encrypted_dek=encrypted_dek,
-        key_fingerprint=key_fingerprint,
-    )
+        # ✅ هل يوجد dossier OPEN لهذا patient ؟
+        open_qs = MedicalRecord.objects.select_for_update().filter(
+            patient=patient,
+            status=RecordStatus.OPEN,
+        )
+
+        if open_qs.exists():
+            existing = open_qs.order_by("-created_at").first()
+
+            # ✅ إذا نفس الطبيب المالك: رجّع نفس dossier بدل إنشاء جديد (اختياري)
+            if existing.created_by_id == request.user.id:
+                return Response(
+                    {
+                        "detail": "An OPEN record already exists for this patient (you are the owner).",
+                        "existing_record_id": existing.id,
+                        "status": existing.status,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # ✅ إذا طبيب آخر هو المالك: ممنوع
+            return Response(
+                {
+                    "detail": "Patient already has an OPEN medical record handled by another doctor.",
+                    "existing_record_id": existing.id,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # ✅ إنشاء dossier جديد (مسموح)
+        record = MedicalRecord.objects.create(
+            patient=patient,
+            created_by=request.user,
+            status=RecordStatus.OPEN,   # ✅ صرّح بها بوضوح
+        )
+
+        RecordKeyEnvelope.objects.create(
+            record=record,
+            doctor=request.user,
+            encrypted_dek=encrypted_dek,
+            key_fingerprint=key_fingerprint,
+            is_active=True,
+        )
 
     return Response(
         {"id": record.id, "patient_id": record.patient_id, "status": record.status},
