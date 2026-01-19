@@ -288,7 +288,7 @@ def register_medecin(request):
 
         token = generate_and_save_activation_token(user)
         activation_link = build_activation_link(token)
-        send_email_async(user, activation_link)
+        send_email_to_medecin(user, activation_link)
 
     except serializers.ValidationError as exc:
         return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
