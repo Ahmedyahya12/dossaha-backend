@@ -52,12 +52,13 @@ INSTALLED_APPS = [
     "accounts",
     "corsheaders",
     "medical_records",
-    "dashboard"
+    "dashboard",
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware", 
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     # "django.middleware.csrf.CsrfViewMiddleware",
@@ -126,7 +127,7 @@ if DATABASE_URL:
         "default": dj_database_url.parse(
             DATABASE_URL,
             conn_max_age=600,
-            ssl_require=True,   # important pour Render external
+            ssl_require=True,  # important pour Render external
         )
     }
 else:
@@ -181,15 +182,11 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
-
-
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
-
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
@@ -204,4 +201,4 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 BASE_URL = env("BASE_URL")
 
 
-FRONTEND_ACTIVATE_URL=env("FRONTEND_ACTIVATE_URL")
+FRONTEND_ACTIVATE_URL = env("FRONTEND_ACTIVATE_URL")
