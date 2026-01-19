@@ -9,6 +9,8 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 from django.utils import timezone
 
+import threading
+
 
 def validate_registration_data(serializer):
     if not serializer.is_valid():
@@ -87,3 +89,12 @@ def send_activation_email(user, activation_link):
 
 def send_email_to_medecin(user, activation_link):
     send_activation_email(user, activation_link)
+
+
+
+def send_email_async(user, activation_link):
+    threading.Thread(
+        target=send_email_to_medecin,
+        args=(user, activation_link),
+        daemon=True
+    ).start()
