@@ -147,6 +147,9 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
+BREVO_API_KEY = env("BREVO_API_KEY")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")  # مثال: dossaha.platform@gmail.com
+BREVO_SENDER_NAME = env("BREVO_SENDER_NAME", default="DOSSAHA")
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
