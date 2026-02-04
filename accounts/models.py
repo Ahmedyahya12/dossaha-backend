@@ -113,6 +113,9 @@ class MedecinProfile(models.Model):
 
     sig_key_uploaded_at = models.DateTimeField(null=True, blank=True)
 
+    wrapped_enc_private_key = models.JSONField(null=True, blank=True)
+    wrapped_sig_private_key = models.JSONField(null=True, blank=True)
+    
     
     def __str__(self):
         return self.user.email

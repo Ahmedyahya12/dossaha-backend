@@ -92,9 +92,9 @@ def send_email_to_medecin(user, activation_link):
 
 
 
-def send_email_async(user, activation_link):
-    threading.Thread(
-        target=send_email_to_medecin,
-        args=(user, activation_link),
-        daemon=True
-    ).start()
+# def send_email_async(user, activation_link):
+#     threading.Thread(
+#         target=send_email_to_medecin,
+#         args=(user, activation_link),
+#         daemon=True
+#     ).start()

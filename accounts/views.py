@@ -19,7 +19,7 @@ from accounts.services.registration_service import (
     create_medecin,
     create_profile,
     generate_and_save_activation_token,
-    send_email_async,
+
     send_email_to_medecin,
     validate_registration_data,
 )
@@ -127,6 +127,82 @@ def upload_signing_key(request):
     profile.save(update_fields=["sig_public_key_pem", "sig_key_fingerprint", "sig_key_uploaded_at"])
 
     return Response({"ok": True, "sig_key_fingerprint": sig_fp}, status=status.HTTP_200_OK)
+
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def provision_keys(request):
+    user = request.user
+    deny = _require_medecin_active_verified(user)
+    if deny:
+        return deny
+
+    profile = user.profile
+
+    public_pem = request.data.get("public_key_pem")
+    key_fp = request.data.get("key_fingerprint")
+    sig_public = request.data.get("sig_public_key_pem")
+    sig_fp = request.data.get("sig_key_fingerprint")
+    wrapped_enc = request.data.get("wrapped_enc_private_key")
+    wrapped_sig = request.data.get("wrapped_sig_private_key")
+    force = bool(request.data.get("force", False))
+
+    if not public_pem or not key_fp or not sig_public or not sig_fp:
+        return Response({"detail": "Missing public/signing key fields"}, status=400)
+    if not wrapped_enc or not wrapped_sig:
+        return Response({"detail": "Missing wrapped private keys"}, status=400)
+
+    # If already exists => prevent overwrite unless force
+    if profile.public_key_pem and profile.key_fingerprint and not force:
+        return Response({"detail": "KEYS_ALREADY_EXIST"}, status=status.HTTP_409_CONFLICT)
+
+    # normalize fps (remove sha256:)
+    if isinstance(key_fp, str) and key_fp.startswith("sha256:"):
+        key_fp = key_fp.split("sha256:", 1)[1]
+    if isinstance(sig_fp, str) and sig_fp.startswith("sha256:"):
+        sig_fp = sig_fp.split("sha256:", 1)[1]
+
+    profile.public_key_pem = public_pem
+    profile.key_fingerprint = key_fp
+    profile.key_uploaded_at = timezone.now()
+
+    profile.sig_public_key_pem = sig_public
+    profile.sig_key_fingerprint = sig_fp
+    profile.sig_key_uploaded_at = timezone.now()
+
+    profile.wrapped_enc_private_key = wrapped_enc
+    profile.wrapped_sig_private_key = wrapped_sig
+
+    profile.save(update_fields=[
+        "public_key_pem","key_fingerprint","key_uploaded_at",
+        "sig_public_key_pem","sig_key_fingerprint","sig_key_uploaded_at",
+        "wrapped_enc_private_key","wrapped_sig_private_key",
+    ])
+
+    return Response({"ok": True}, status=200)
+
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_wrapped_keys(request):
+    user = request.user
+    deny = _require_medecin_active_verified(user)
+    if deny:
+        return deny
+
+    profile = user.profile
+    if not profile.wrapped_enc_private_key or not profile.wrapped_sig_private_key:
+        return Response({"detail": "NO_WRAPPED_KEYS"}, status=404)
+
+    return Response({
+        "key_fingerprint": f"sha256:{profile.key_fingerprint}" if profile.key_fingerprint else None,
+        "sig_key_fingerprint": f"sha256:{profile.sig_key_fingerprint}" if profile.sig_key_fingerprint else None,
+        "wrapped_enc_private_key": profile.wrapped_enc_private_key,
+        "wrapped_sig_private_key": profile.wrapped_sig_private_key,
+    }, status=200)
+
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])

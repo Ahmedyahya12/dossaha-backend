@@ -14,6 +14,8 @@ urlpatterns = [
     path("keys/signing/", views.upload_signing_key, name="keys-signing"),
     path("patients/", views.my_patients, name="my_patients"),
     path("patients/create/", views.create_patient, name="create_patient"),
+    path("keys/provision/", views.provision_keys),
+    path("keys/wrapped/", views.get_wrapped_keys),
     # path("profile/", views.update_medecin_profile),
     # path("keys/public/", views.upload_public_key),
     # # admin
