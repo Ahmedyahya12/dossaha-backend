@@ -25,9 +25,9 @@ urlpatterns = [
     path("api/accounts/", include("accounts.urls")),
     path("api/", include("medical_records.urls")),
     path("api/", include("dashboard.urls")),
+    path("api/notifications/", include("notifications.urls")),
 ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-

@@ -287,7 +287,7 @@ class MedicalRecordDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "patient_id",
-            "patient_name",   # ✅ الجديد
+            "patient_name",   # 
             "status",
             "created_by",
             "created_at",

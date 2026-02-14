@@ -222,7 +222,6 @@ def rotate_keys(request):
 
     profile = request.user.profile
 
-    # ✅ حماية: لا تغيّر المفاتيح إلا إذا المستخدم صرّح force=true
     force = bool(request.data.get("force", False))
 
     if profile.public_key_pem and profile.key_fingerprint:

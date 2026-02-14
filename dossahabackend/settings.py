@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "medical_records",
     "dashboard",
+    "notifications"
 ]
 
 MIDDLEWARE = [

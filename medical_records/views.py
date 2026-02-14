@@ -1,9 +1,11 @@
+from urllib import request
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
+
 # views.py
 from django.db import transaction
 
@@ -14,8 +16,18 @@ from accounts.models import CustomUser, Role
 from dossahabackend import settings
 from medical_records.services.email_service import send_share_email
 from medical_records.services.security_log import log_event
+from notifications.models import NotificationType
+from notifications.services import notify
 
-from .models import MedicalRecord, MedicalDocument, RecordKeyEnvelope, RecordStatus, Referral, ReferralStatus, SecurityEventType
+from .models import (
+    MedicalRecord,
+    MedicalDocument,
+    RecordKeyEnvelope,
+    RecordStatus,
+    Referral,
+    ReferralStatus,
+    SecurityEventType,
+)
 from .serializers import (
     DoctorLookupSerializer,
     MedicalDocumentUpdateSerializer,
@@ -67,10 +79,15 @@ def update_document(request, record_id: int, doc_id: int):
 
     # ✅ تحقق صلاحية الوصول
     if record.created_by_id != request.user.id:
-      return Response({"detail": "Only owner can update documents."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "Only owner can update documents."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     # ✅ ممنوع تعديل إذا ARCHIVED (اختياري لكن منطقي)
     if record.status == RecordStatus.ARCHIVED:
-        return Response({"detail": "Record archived (read-only)."}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            {"detail": "Record archived (read-only)."}, status=status.HTTP_409_CONFLICT
+        )
 
     doc = get_object_or_404(MedicalDocument, id=doc_id, record=record)
 
@@ -97,19 +114,20 @@ def update_document(request, record_id: int, doc_id: int):
 
     doc.save()
 
-   
     try:
         log_event(
             record=record,
             event_type="DOCUMENT_UPDATED",
-            user=request.user, 
-               
+            user=request.user,
             metadata={"doc_id": doc.id, "doc_type": doc.document_type},
         )
     except Exception:
         pass
 
-    return Response(MedicalDocumentDetailSerializer(doc).data, status=status.HTTP_200_OK)
+    return Response(
+        MedicalDocumentDetailSerializer(doc).data, status=status.HTTP_200_OK
+    )
+
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -117,14 +135,46 @@ def create_referral(request, record_id):
     record = get_object_or_404(MedicalRecord, id=record_id)
 
     if record.status != RecordStatus.OPEN:
-        return Response({"detail":"Record read-only."}, status=400)
+        return Response({"detail": "Record read-only."}, status=400)
 
     if record.created_by_id != request.user.id:
-        return Response({"detail":"Only owner can refer."}, status=403)
+        return Response({"detail": "Only owner can refer."}, status=403)
 
     ser = ReferralCreateSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
     to_doctor_id = ser.validated_data["to_doctor_id"]
+
+    # ✅ Interdire de référer à soi-même
+    if int(to_doctor_id) == int(request.user.id):
+        return Response(
+            {
+                "detail": "Impossible : vous ne pouvez pas référer un dossier à vous-même."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    # ✅ Interdire de référer à soi-même
+    # ✅ Interdire référer deux fois le même médecin pour le même dossier
+    already = Referral.objects.filter(
+        record=record,
+        to_doctor_id=to_doctor_id,
+        status=ReferralStatus.PENDING,  # seulement si une demande est en attente
+    ).exists()
+
+    if already:
+        return Response(
+            {
+                "detail": "Une demande de référencement est déjà en attente pour ce médecin."
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    # has_any = Referral.objects.filter(record=record).exists()
+    # if has_any:
+    #     return Response(
+    #         {
+    #             "detail": "Ce dossier a déjà une demande de référencement. Impossible d’en créer une autre."
+    #         },
+    #         status=status.HTTP_409_CONFLICT,
+    #     )
 
     to_doctor = get_object_or_404(CustomUser, id=to_doctor_id, role=Role.MEDECIN)
 
@@ -132,9 +182,18 @@ def create_referral(request, record_id):
         record=record,
         from_doctor=request.user,
         to_doctor=to_doctor,
-        reason=ser.validated_data.get("reason",""),
+        reason=ser.validated_data.get("reason", ""),
         encrypted_dek=ser.validated_data["encrypted_dek"],
         key_fingerprint=ser.validated_data.get("key_fingerprint") or None,
+    )
+
+    notify(
+        recipient=to_doctor,
+        type=NotificationType.REFERRAL_CREATED,
+        title="Nouveau referral reçu",
+        message=f"Le Dr {request.user.get_full_name() or request.user.email} vous a référé un dossier.",
+        record_id=record.id,
+        referral_id=ref.id,
     )
 
     log_event(
@@ -142,16 +201,18 @@ def create_referral(request, record_id):
         actor=request.user,
         event_type=SecurityEventType.RECORD_REFERRAL_CREATED,
         request=request,
-        target_doctor=to_doctor
+        target_doctor=to_doctor,
     )
 
     return Response(ReferralListSerializer(ref).data, status=201)
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
 def list_referrals_received(request):
     qs = Referral.objects.filter(to_doctor=request.user).order_by("-id")
     return Response(ReferralListSerializer(qs, many=True).data)
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -166,14 +227,14 @@ def accept_referral(request, referral_id):
     ref = get_object_or_404(Referral, id=referral_id)
 
     if ref.to_doctor_id != request.user.id:
-        return Response({"detail":"Not allowed."}, status=403)
+        return Response({"detail": "Not allowed."}, status=403)
 
     if ref.status != ReferralStatus.PENDING:
-        return Response({"detail":"Referral not pending."}, status=400)
+        return Response({"detail": "Referral not pending."}, status=400)
 
     record = ref.record
     if record.status != RecordStatus.OPEN:
-        return Response({"detail":"Record read-only."}, status=400)
+        return Response({"detail": "Record read-only."}, status=400)
 
     # ✅ grant access
     record.allowed_doctors.add(request.user)
@@ -186,17 +247,37 @@ def accept_referral(request, referral_id):
             key_fingerprint=ref.key_fingerprint,
             shared_by=ref.from_doctor,
             is_active=True,
-        )
+        ),
     )
 
     ref.status = ReferralStatus.ACCEPTED
     ref.decided_at = timezone.now()
-    ref.save(update_fields=["status","decided_at"])
+    ref.save(update_fields=["status", "decided_at"])
+    notify(
+    recipient=ref.from_doctor,
+    type=NotificationType.REFERRAL_ACCEPTED,
+    title="Referral accepté",
+    message=f"Le Dr {request.user.get_full_name() or request.user.email} a accepté le referral.",
+    record_id=record.id,
+    referral_id=ref.id,
+)
+    log_event(
+        record=record,
+        actor=request.user,
+        event_type=SecurityEventType.RECORD_REFERRAL_ACCEPTED,
+        request=request,
+        target_doctor=request.user,
+    )
+    log_event(
+        record=record,
+        actor=ref.from_doctor,
+        event_type=SecurityEventType.RECORD_SHARE,
+        request=request,
+        target_doctor=request.user,
+    )
 
-    log_event(record=record, actor=request.user, event_type=SecurityEventType.RECORD_REFERRAL_ACCEPTED, request=request, target_doctor=request.user)
-    log_event(record=record, actor=ref.from_doctor, event_type=SecurityEventType.RECORD_SHARE, request=request, target_doctor=request.user)
+    return Response({"detail": "Referral accepted. Access granted."})
 
-    return Response({"detail":"Referral accepted. Access granted."})
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -204,17 +285,31 @@ def reject_referral(request, referral_id):
     ref = get_object_or_404(Referral, id=referral_id)
 
     if ref.to_doctor_id != request.user.id:
-        return Response({"detail":"Not allowed."}, status=403)
+        return Response({"detail": "Not allowed."}, status=403)
 
     if ref.status != ReferralStatus.PENDING:
-        return Response({"detail":"Referral not pending."}, status=400)
+        return Response({"detail": "Referral not pending."}, status=400)
 
     ref.status = ReferralStatus.REJECTED
     ref.decided_at = timezone.now()
-    ref.save(update_fields=["status","decided_at"])
+    ref.save(update_fields=["status", "decided_at"])
+    notify(
+    recipient=ref.from_doctor,
+    type=NotificationType.REFERRAL_REJECTED,
+    title="Referral refusé",
+    message=f"Le Dr {request.user.get_full_name() or request.user.email} a refusé le referral.",
+    record_id=ref.record_id,
+    referral_id=ref.id,
+)
+    log_event(
+        record=ref.record,
+        actor=request.user,
+        event_type=SecurityEventType.RECORD_REFERRAL_REJECTED,
+        request=request,
+        target_doctor=request.user,
+    )
+    return Response({"detail": "Referral rejected."})
 
-    log_event(record=ref.record, actor=request.user, event_type=SecurityEventType.RECORD_REFERRAL_REJECTED, request=request, target_doctor=request.user)
-    return Response({"detail":"Referral rejected."})
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsActiveVerifiedMedecin])
@@ -292,9 +387,11 @@ def list_security_events(request, record_id: int):
     if not _can_access_record(request.user, record):
         return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-    qs = SecurityEvent.objects.filter(record=record).select_related(
-        "actor", "target_doctor", "doc"
-    )[:20]
+    qs = (
+        SecurityEvent.objects.filter(record=record)
+        .select_related("actor", "target_doctor", "doc")
+        .order_by("-created_at")[:20]
+    )
     return Response(SecurityEventSerializer(qs, many=True).data)
 
 
@@ -312,14 +409,13 @@ def list_record_shared_doctors(request, record_id: int):
     qs = (
         RecordKeyEnvelope.objects.select_related("doctor", "shared_by")
         .filter(record=record, is_active=True)
-        .exclude(doctor_id=record.created_by_id)  # ✅ لا نعرض owner كـ shared
+        .exclude(doctor_id=record.created_by_id)  #
         .order_by("-created_at")
     )
 
     return Response(
         SharedDoctorSerializer(qs, many=True).data, status=status.HTTP_200_OK
     )
-
 
 
 @api_view(["POST"])
@@ -333,10 +429,8 @@ def create_record(request):
     encrypted_dek = dek_env["encrypted_dek"]
     key_fingerprint = dek_env.get("key_fingerprint")
 
-    # ✅ منع race condition (طبيبين ينشئون في نفس الوقت)
     with transaction.atomic():
 
-        # ✅ هل يوجد dossier OPEN لهذا patient ؟
         open_qs = MedicalRecord.objects.select_for_update().filter(
             patient=patient,
             status=RecordStatus.OPEN,
@@ -345,7 +439,6 @@ def create_record(request):
         if open_qs.exists():
             existing = open_qs.order_by("-created_at").first()
 
-            # ✅ إذا نفس الطبيب المالك: رجّع نفس dossier بدل إنشاء جديد (اختياري)
             if existing.created_by_id == request.user.id:
                 return Response(
                     {
@@ -369,7 +462,7 @@ def create_record(request):
         record = MedicalRecord.objects.create(
             patient=patient,
             created_by=request.user,
-            status=RecordStatus.OPEN,   # ✅ صرّح بها بوضوح
+            status=RecordStatus.OPEN,  # ✅ صرّح بها بوضوح
         )
 
         RecordKeyEnvelope.objects.create(
@@ -516,7 +609,6 @@ def get_document_cipher(request, record_id: int, doc_id: int):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    # ✅ select_related لتفادي queries إضافية
     doc = get_object_or_404(
         MedicalDocument.objects.select_related("signed_by", "signed_by__profile"),
         id=doc_id,
@@ -529,12 +621,8 @@ def get_document_cipher(request, record_id: int, doc_id: int):
         signed_by_data = {
             "id": doc.signed_by.id,
             "name": doc.signed_by.get_full_name() or doc.signed_by.email,
-            # ✅ مفاتيح التوقيع (RSA-PSS) للتحقق
             "sig_public_key_pem": getattr(profile, "sig_public_key_pem", None),
             "sig_key_fingerprint": getattr(profile, "sig_key_fingerprint", None),
-            # (اختياري) إذا تحتاج مفتاح التشفير OAEP لأشياء أخرى
-            # "enc_public_key_pem": getattr(profile, "public_key_pem", None),
-            # "enc_key_fingerprint": getattr(profile, "key_fingerprint", None),
         }
 
     log_event(
@@ -556,7 +644,6 @@ def get_document_cipher(request, record_id: int, doc_id: int):
             "signature": doc.signature,
             "signed_by": signed_by_data,
             "signed_at": doc.signed_at,
-            # ✅ fingerprint المفتاح الذي استُخدم وقت التوقيع
             "signing_key_fingerprint": doc.signing_key_fingerprint,
         },
         status=status.HTTP_200_OK,
@@ -583,6 +670,14 @@ def doctor_lookup(request):
         is_email_verified=True,
         profile__is_verified=True,
     )
+    # ✅ Self-lookup interdit : même compte
+    if doctor.id == request.user.id:
+        return Response(
+            {
+                "detail": "Action impossible : vous ne pouvez pas effectuer cette opération sur votre propre compte."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     if not doctor.profile.public_key_pem:
         return Response(
@@ -613,6 +708,13 @@ def share_record(request, record_id: int):
     doctor_email = ser.validated_data["doctor_email"].lower()
     dek_env = ser.validated_data["dek_envelope"]
 
+    # ✅ Interdire de partager avec soi-même
+    if doctor_email == request.user.email.lower():
+        return Response(
+            {"detail": "Vous ne pouvez pas partager un dossier avec vous-même."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     target = get_object_or_404(
         CustomUser.objects.select_related("profile"),
         email=doctor_email,
@@ -639,7 +741,7 @@ def share_record(request, record_id: int):
             "encrypted_dek": dek_env["encrypted_dek"],
             "key_fingerprint": dek_env.get("key_fingerprint"),
             "is_active": True,
-            "shared_by": request.user,  # 👈 مهم
+            "shared_by": request.user,  #
         },
     )
 
@@ -659,15 +761,16 @@ def share_record(request, record_id: int):
         event_type=SecurityEventType.RECORD_SHARE,
     )
 
-    return Response(
-        {"detail": "Record shared/updated successfully", "record_id": record.id},
-        status=status.HTTP_201_CREATED,
-    )
-
     # notify by email
     from_name = request.user.get_full_name() or request.user.email
     to_name = target.get_full_name() or target.email
-
+    notify(
+        recipient=target,
+        type=NotificationType.RECORD_SHARED,
+        title="Nouveau dossier partagé",
+        message=f"Le Dr {request.user.get_full_name() or request.user.email} vous a partagé un dossier.",
+        record_id=record.id,
+    )
     send_share_email(
         to_email=target.email,
         to_name=to_name,
@@ -701,7 +804,7 @@ def list_shared_records(request):
             allowed_doctors=user,
             status__in=[RecordStatus.OPEN, RecordStatus.CLOSED],
         )
-        .exclude(created_by=user)   # ✅ مهم: استبعد OWNER
+        .exclude(created_by=user)  # ✅ مهم: استبعد OWNER
         .distinct()
         .order_by("-updated_at")
     )
